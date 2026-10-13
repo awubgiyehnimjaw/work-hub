@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { neon } from "@neondatabase/serverless";
@@ -27,6 +28,72 @@ async function createTestDb() {
   const testDb = drizzlePglite(client, { schema });
   await migratePglite(testDb, { migrationsFolder });
   return testDb;
+}
+
+async function createLocalDevDb() {
+  // Local development without a provisioned Neon database: a file-backed
+  // PGlite instance persisted under a gitignored directory at the repo
+  // root. Unlike the test branch, this data directory is NOT ephemeral —
+  // it persists across `next dev` restarts so local data survives
+  // between runs — but it is still just local Postgres-in-WASM, migrated
+  // on startup the same way the test branch is.
+  //
+  // This is only called at real `next dev` / `next start` runtime (see
+  // the `NEXT_PHASE` guard below) — never during `next build`'s
+  // "Collecting page data" step — so it's safe to construct and migrate
+  // eagerly here and await the result before a single request is ever
+  // served.
+  //
+  // `process.cwd()` (the project root for `next dev`/`build`/`start`
+  // alike) is used instead of `import.meta.dirname` deliberately: unlike
+  // `createTestDb`'s condition, "DATABASE_URL is unset" is not statically
+  // known to webpack, so this function is not dead-code-eliminated from
+  // the production bundle, and `import.meta.dirname` is `undefined` in
+  // that compiled server bundle (the same webpack quirk documented on
+  // `createTestDb`). That previously crashed `path.resolve` here with
+  // "paths[0] argument must be of type string" whenever this ran inside
+  // a webpack-bundled context — `process.cwd()` isn't subject to that.
+  const migrationsFolder = path.resolve(process.cwd(), "lib/db/migrations");
+  const dataDir = path.resolve(process.cwd(), ".data/dev-db");
+  // PGlite's file-backed mode does a plain (non-recursive) `mkdir` on the
+  // data directory, so it throws ENOENT the first time around if `.data`
+  // itself doesn't exist yet. Creating it ourselves, recursively, avoids
+  // that; `recursive: true` also makes this a no-op on subsequent runs.
+  mkdirSync(dataDir, { recursive: true });
+  const client = new PGlite(dataDir);
+  const devDb = drizzlePglite(client, { schema });
+  await migratePglite(devDb, { migrationsFolder });
+  return devDb;
+}
+
+/**
+ * Inert placeholder used only during `next build`'s "Collecting page
+ * data" step when `DATABASE_URL` is unset — i.e. exactly the local-dev
+ * case `createLocalDevDb` handles, but inside the one context where
+ * actually constructing it is unsafe.
+ *
+ * That build step `require()`s every route module purely to read static
+ * metadata; it never invokes a handler, so nothing ever queries this.
+ * But unlike the production branch's "DATABASE_URL is not set" check,
+ * "DATABASE_URL is unset" is not something webpack can statically
+ * eliminate, so `createLocalDevDb` would otherwise actually run during
+ * the build — attempting real filesystem I/O (creating `.data/dev-db`
+ * and migrating it) in a context where that's fragile at best (e.g. the
+ * parent directory may not exist yet, since PGlite doesn't create it
+ * recursively). Swapping in this no-op Proxy for that one phase avoids
+ * all of that while leaving real `next dev`/`next start` runtime
+ * untouched.
+ */
+function createInertBuildTimeDb(): ReturnType<typeof drizzlePglite> {
+  return new Proxy({} as ReturnType<typeof drizzlePglite>, {
+    get(_target, prop) {
+      throw new Error(
+        `Local dev db placeholder accessed (property: ${String(prop)}). ` +
+          "This placeholder only exists to satisfy next build's page-data " +
+          "collection and should never actually be queried.",
+      );
+    },
+  });
 }
 
 function createProductionDb() {
@@ -74,4 +141,8 @@ function createLazyProductionDb(): ProductionDb {
 export const db =
   process.env.NODE_ENV === "test"
     ? await createTestDb()
-    : createLazyProductionDb();
+    : process.env.DATABASE_URL
+      ? createLazyProductionDb()
+      : process.env.NEXT_PHASE === "phase-production-build"
+        ? createInertBuildTimeDb()
+        : await createLocalDevDb();

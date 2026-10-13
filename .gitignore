@@ -11,6 +11,9 @@
 # testing / coverage
 /coverage
 
+# local file-backed dev database (PGlite, used when DATABASE_URL is unset)
+/.data
+
 # env files
 .env
 .env*.local
