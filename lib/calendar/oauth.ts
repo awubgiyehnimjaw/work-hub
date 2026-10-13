@@ -9,7 +9,20 @@
  * OAuth 2.0 endpoints (not guessed):
  * - https://accounts.google.com/o/oauth2/v2/auth
  * - https://oauth2.googleapis.com/token
+ *
+ * Google access tokens are short-lived (~1 hour), same as Frame.io's — so
+ * this module also owns `refreshGoogleToken`, which uses the stored
+ * `refreshToken` to mint a new access token against the same token
+ * endpoint. Called from `lib/calendar/google-client.ts` whenever the stored
+ * token is at/near expiry, following the exact same pattern as
+ * `lib/frameio/client.ts`'s `getAccessToken` calling `refreshFrameioToken`
+ * (Task 6's review flagged a missing refresh path as a real gap there, so
+ * it's addressed here from the start rather than in a later fix round).
  */
+
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { oauthTokens } from "@/lib/db/schema";
 
 const GOOGLE_AUTHORIZE_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
@@ -59,6 +72,37 @@ interface GoogleTokenResponse {
 }
 
 /**
+ * Google's refresh response always carries a fresh access token, but often
+ * omits `refresh_token` (the original stays valid, Google just doesn't
+ * rotate it on every refresh) — so it's optional here, unlike the initial
+ * exchange where it's guaranteed. Same shape as Adobe's
+ * `AdobeRefreshResponse` in `lib/frameio/oauth.ts`.
+ */
+interface GoogleRefreshResponse {
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+}
+
+async function postToGoogleTokenEndpoint<T>(
+  params: Record<string, string>,
+  failureLabel: string,
+): Promise<T> {
+  const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`${failureLabel}: ${response.status} ${errorBody}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+/**
  * Exchanges the authorization `code` Google sent to the callback route for
  * an access/refresh token pair.
  *
@@ -74,28 +118,70 @@ export async function exchangeGoogleCode(
   const clientId = requireEnv("GOOGLE_CLIENT_ID");
   const clientSecret = requireEnv("GOOGLE_CLIENT_SECRET");
 
-  const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
+  const data = await postToGoogleTokenEndpoint<GoogleTokenResponse>(
+    {
       client_id: clientId,
       client_secret: clientSecret,
       code,
       grant_type: "authorization_code",
       redirect_uri: redirectUri,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
-    throw new Error(`Google token exchange failed: ${response.status} ${errorBody}`);
-  }
-
-  const data = (await response.json()) as GoogleTokenResponse;
+    },
+    "Google token exchange failed",
+  );
 
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresAt: new Date(Date.now() + data.expires_in * 1000),
   };
+}
+
+/**
+ * Uses the stored `refreshToken` for the `google` `oauthTokens` row to mint
+ * a new access token from Google's token endpoint, and overwrites that row
+ * with the refreshed access/refresh token pair and expiry. Throws if there
+ * is no stored row to refresh (Google was never connected) — there is
+ * nothing useful to do in that case, the caller should direct Callum
+ * through the connect flow instead. Mirrors
+ * `lib/frameio/oauth.ts`'s `refreshFrameioToken` exactly.
+ */
+export async function refreshGoogleToken(): Promise<void> {
+  const clientId = requireEnv("GOOGLE_CLIENT_ID");
+  const clientSecret = requireEnv("GOOGLE_CLIENT_SECRET");
+
+  const [row] = await db
+    .select()
+    .from(oauthTokens)
+    .where(eq(oauthTokens.provider, "google"));
+  if (!row) {
+    throw new Error(
+      "Google is not connected (no oauthTokens row for provider 'google') — nothing to refresh",
+    );
+  }
+
+  const data = await postToGoogleTokenEndpoint<GoogleRefreshResponse>(
+    {
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: row.refreshToken,
+    },
+    "Google token refresh failed",
+  );
+
+  const accessToken = data.access_token;
+  // Google may not return a new refresh token on every refresh; keep the
+  // existing one in that case rather than discarding it.
+  const refreshToken = data.refresh_token ?? row.refreshToken;
+  const expiresAt = new Date(Date.now() + data.expires_in * 1000);
+
+  // Same upsert pattern as the callback route's initial connect (Task 9) —
+  // keyed on the `oauth_tokens.provider` unique constraint.
+  await db
+    .insert(oauthTokens)
+    .values({ provider: "google", accessToken, refreshToken, expiresAt })
+    .onConflictDoUpdate({
+      target: oauthTokens.provider,
+      set: { accessToken, refreshToken, expiresAt },
+    });
 }
