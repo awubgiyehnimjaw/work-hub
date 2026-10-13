@@ -38,11 +38,12 @@ async function createLocalDevDb() {
   // between runs — but it is still just local Postgres-in-WASM, migrated
   // on startup the same way the test branch is.
   //
-  // This is only called at real `next dev` / `next start` runtime (see
-  // the `NEXT_PHASE` guard below) — never during `next build`'s
-  // "Collecting page data" step — so it's safe to construct and migrate
-  // eagerly here and await the result before a single request is ever
-  // served.
+  // This is only called at real `next dev` runtime — gated on both
+  // `NODE_ENV !== "production"` and the `NEXT_PHASE` check below, so
+  // neither `next build`'s "Collecting page data" step nor a `next
+  // start` production deploy missing `DATABASE_URL` ever reaches this —
+  // so it's safe to construct and migrate eagerly here and await the
+  // result before a single request is ever served.
   //
   // `process.cwd()` (the project root for `next dev`/`build`/`start`
   // alike) is used instead of `import.meta.dirname` deliberately: unlike
@@ -138,11 +139,86 @@ function createLazyProductionDb(): ProductionDb {
   });
 }
 
+export type DbMode =
+  | "test"
+  | "production"
+  | "build-placeholder"
+  | "production-missing-database-url"
+  | "local-dev";
+
+/**
+ * Pure decision logic for which of the five `db` branches below to take,
+ * extracted so the gating itself — in particular, that a production
+ * runtime with no `DATABASE_URL` fails loudly instead of silently falling
+ * through to the local-dev database — can be unit-tested directly with
+ * plain inputs, without needing to reimport `lib/db/client.ts` under
+ * different `process.env` values (this module reads `process.env` once,
+ * at import time, and the test suite itself always runs with
+ * `NODE_ENV=test`).
+ *
+ * Order matters and mirrors the `db` ternary exactly:
+ *  1. `NODE_ENV === "test"` → ephemeral in-memory PGlite, always wins.
+ *  2. `DATABASE_URL` set → real (lazy) Neon connection.
+ *  3. `NEXT_PHASE === "phase-production-build"` → inert build-time
+ *     placeholder, regardless of `NODE_ENV` (the build itself runs with
+ *     `NODE_ENV=production`, so this must be checked before case 4).
+ *  4. `NODE_ENV === "production"` (and none of the above) → missing
+ *     `DATABASE_URL` in a real production runtime; fail loudly via the
+ *     same lazy production path/throw as case 2, rather than silently
+ *     constructing a throwaway local database that would mask the
+ *     misconfiguration and lose data on every restart.
+ *  5. Otherwise (`development`, or any other non-test, non-production
+ *     value) → file-backed local dev database.
+ */
+export function selectDbMode({
+  nodeEnv,
+  databaseUrl,
+  nextPhase,
+}: {
+  nodeEnv: string | undefined;
+  databaseUrl: string | undefined;
+  nextPhase: string | undefined;
+}): DbMode {
+  if (nodeEnv === "test") {
+    return "test";
+  }
+  if (databaseUrl) {
+    return "production";
+  }
+  if (nextPhase === "phase-production-build") {
+    return "build-placeholder";
+  }
+  if (nodeEnv === "production") {
+    return "production-missing-database-url";
+  }
+  return "local-dev";
+}
+
+const dbMode = selectDbMode({
+  nodeEnv: process.env.NODE_ENV,
+  databaseUrl: process.env.DATABASE_URL,
+  nextPhase: process.env.NEXT_PHASE,
+});
+
 export const db =
-  process.env.NODE_ENV === "test"
+  dbMode === "test"
     ? await createTestDb()
-    : process.env.DATABASE_URL
+    : dbMode === "production"
       ? createLazyProductionDb()
-      : process.env.NEXT_PHASE === "phase-production-build"
+      : dbMode === "build-placeholder"
         ? createInertBuildTimeDb()
-        : await createLocalDevDb();
+        : dbMode === "production-missing-database-url"
+          ? // Production runtime (`next start`), not the build phase, with
+            // `DATABASE_URL` missing from the deployed environment (e.g. a
+            // secret-rotation mistake or wrong environment target). Reuse
+            // the exact same lazy production path — and therefore the same
+            // "DATABASE_URL is not set" throw on first access — as the
+            // `"production"` mode above takes when `DATABASE_URL` is set.
+            // Falling through to the local file-backed PGlite database
+            // here would silently paper over the misconfiguration: the
+            // app would appear to work while every request read/wrote a
+            // throwaway database that gets wiped on the next
+            // deploy/restart, and the real problem would never surface as
+            // an error.
+            createLazyProductionDb()
+          : await createLocalDevDb();
