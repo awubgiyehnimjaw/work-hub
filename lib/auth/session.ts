@@ -16,11 +16,18 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 
 export const SESSION_COOKIE_NAME = "session";
 
-// There is no per-user data in a single-passcode session, so the signed
-// payload is just a fixed marker. Its value doesn't matter for security —
-// what matters is that only someone holding SESSION_SECRET can produce a
-// signature that verifies against it.
-const SESSION_PAYLOAD = "authenticated";
+// Important 10: a session cookie used to carry a constant signed payload
+// ("authenticated") with no expiry check at all — any issued cookie was
+// valid forever until SESSION_SECRET itself was rotated (too long-lived in
+// principle), while having no `maxAge` on the cookie made it die whenever
+// iOS terminated the installed PWA (too short-lived in practice). The
+// payload now embeds an issued-at timestamp so `verifySessionCookie` can
+// reject a cookie older than this, and the login route sets an explicit
+// `maxAge` matching the same window so the cookie survives app restarts.
+export const MAX_SESSION_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+
+const PAYLOAD_PREFIX = "authenticated";
+const PAYLOAD_RE = /^authenticated\.(\d+)$/;
 
 function getSessionSecret(): string {
   const secret = process.env.SESSION_SECRET;
@@ -48,13 +55,26 @@ function timingSafeEqual(a: string, b: string): boolean {
   return mismatch === 0;
 }
 
-/** Builds the signed value to store in the `session` cookie. */
-export function createSessionCookie(): string {
-  return `${SESSION_PAYLOAD}.${sign(SESSION_PAYLOAD)}`;
+/**
+ * Builds the signed value to store in the `session` cookie, embedding
+ * `now`'s time as the issued-at timestamp `verifySessionCookie` later
+ * checks against `MAX_SESSION_AGE_MS`. `now` defaults to the real clock;
+ * the login route passes its own already-captured `now` so the cookie's
+ * issued-at and the rest of that request's timestamps agree exactly.
+ */
+export function createSessionCookie(now: Date = new Date()): string {
+  const payload = `${PAYLOAD_PREFIX}.${now.getTime()}`;
+  return `${payload}.${sign(payload)}`;
 }
 
-/** Verifies a cookie value produced by `createSessionCookie`. */
-export function verifySessionCookie(value: string | undefined): boolean {
+/**
+ * Verifies a cookie value produced by `createSessionCookie`: the
+ * signature must match AND the embedded issued-at timestamp must be no
+ * more than `MAX_SESSION_AGE_MS` old (and not in the future) as of `now`.
+ * `now` defaults to the real clock; tests pass an explicit value to check
+ * expiry without manipulating the system clock.
+ */
+export function verifySessionCookie(value: string | undefined, now: Date = new Date()): boolean {
   if (!value) {
     return false;
   }
@@ -67,7 +87,8 @@ export function verifySessionCookie(value: string | undefined): boolean {
   const payload = value.slice(0, separatorIndex);
   const signature = value.slice(separatorIndex + 1);
 
-  if (payload !== SESSION_PAYLOAD) {
+  const payloadMatch = PAYLOAD_RE.exec(payload);
+  if (!payloadMatch) {
     return false;
   }
 
@@ -79,5 +100,11 @@ export function verifySessionCookie(value: string | undefined): boolean {
     return false;
   }
 
-  return timingSafeEqual(signature, expectedSignature);
+  if (!timingSafeEqual(signature, expectedSignature)) {
+    return false;
+  }
+
+  const issuedAtMs = Number(payloadMatch[1]);
+  const ageMs = now.getTime() - issuedAtMs;
+  return ageMs >= 0 && ageMs <= MAX_SESSION_AGE_MS;
 }
