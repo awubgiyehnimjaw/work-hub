@@ -36,6 +36,7 @@ beforeEach(async () => {
   mockSetVapidDetails.mockReset();
   process.env.VAPID_PUBLIC_KEY = "test-vapid-public-key";
   process.env.VAPID_PRIVATE_KEY = "test-vapid-private-key";
+  process.env.VAPID_SUBJECT = "mailto:test@example.com";
   await db.delete(pushSubscriptions);
 });
 
@@ -55,9 +56,10 @@ test("sendPush delivers to a valid subscription", async () => {
   });
   expect(JSON.parse(sentPayload)).toEqual(payload);
 
-  // VAPID details are configured (from env) before every send.
+  // VAPID details are configured (from env) before every send — I1's fix:
+  // the subject comes from VAPID_SUBJECT, not a hardcoded placeholder.
   expect(mockSetVapidDetails).toHaveBeenCalledWith(
-    expect.stringContaining("mailto:"),
+    "mailto:test@example.com",
     "test-vapid-public-key",
     "test-vapid-private-key",
   );
@@ -158,4 +160,29 @@ test("sendPush does not throw when VAPID env vars are missing", async () => {
 
   await expect(sendPush(subscription, payload)).resolves.toBeUndefined();
   expect(mockSendNotification).not.toHaveBeenCalled();
+});
+
+// I1 regression coverage: VAPID_SUBJECT used to be a hardcoded fake
+// placeholder ("mailto:admin@workhub.local") — it must now come from a real
+// env var and fail closed (like the VAPID keys) rather than silently
+// falling back to a fake sender address.
+
+test("sendPush does not throw and does not send when VAPID_SUBJECT is missing", async () => {
+  delete process.env.VAPID_SUBJECT;
+
+  await expect(sendPush(subscription, payload)).resolves.toBeUndefined();
+  expect(mockSendNotification).not.toHaveBeenCalled();
+});
+
+test("sendPush uses the exact VAPID_SUBJECT value configured, with no fallback", async () => {
+  process.env.VAPID_SUBJECT = "https://example.com/contact";
+  mockSendNotification.mockResolvedValue({ statusCode: 201, body: "", headers: {} });
+
+  await sendPush(subscription, payload);
+
+  expect(mockSetVapidDetails).toHaveBeenCalledWith(
+    "https://example.com/contact",
+    "test-vapid-public-key",
+    "test-vapid-private-key",
+  );
 });

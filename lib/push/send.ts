@@ -29,12 +29,6 @@ export interface PushPayload {
   url: string;
 }
 
-// Identifies the sender to push services per the Web Push protocol (a
-// `mailto:` address or URL). This project has no existing contact-email
-// convention, so this is a placeholder — swap in a real address at deploy
-// time. Not security-sensitive, so this doesn't block the task.
-const VAPID_SUBJECT = "mailto:admin@workhub.local";
-
 /**
  * Configures VAPID details from env vars before every send. web-push
  * validates these synchronously and throws if either is missing/malformed,
@@ -42,14 +36,29 @@ const VAPID_SUBJECT = "mailto:admin@workhub.local";
  * load — a missing/invalid VAPID configuration must be logged and
  * swallowed like any other send failure, not crash whichever module
  * imports this file.
+ *
+ * `VAPID_SUBJECT` identifies the sender to push services per the Web Push
+ * protocol (a `mailto:` address or URL) — Apple in particular is strict
+ * about this `sub` claim. This used to be hardcoded to a fake
+ * `mailto:admin@workhub.local` placeholder; that's never sent to a real
+ * push service in practice, so it now fails closed like the VAPID keys
+ * themselves (same fail-closed pattern as `requireEnv` in
+ * lib/frameio/client.ts) rather than silently configuring web-push with a
+ * contact address that doesn't resolve to anyone. The real value is the
+ * deployer's call — see `.env.example`/deploy-notes.md — never invented
+ * here.
  */
 function configureVapid(): void {
   const publicKey = process.env.VAPID_PUBLIC_KEY;
   const privateKey = process.env.VAPID_PRIVATE_KEY;
+  const subject = process.env.VAPID_SUBJECT;
   if (!publicKey || !privateKey) {
     throw new Error("VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY are not configured");
   }
-  webpush.setVapidDetails(VAPID_SUBJECT, publicKey, privateKey);
+  if (!subject) {
+    throw new Error("VAPID_SUBJECT environment variable is not set");
+  }
+  webpush.setVapidDetails(subject, publicKey, privateKey);
 }
 
 /** Extracts a numeric `statusCode` from an unknown rejection, if present. */
