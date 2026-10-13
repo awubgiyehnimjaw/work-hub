@@ -29,15 +29,27 @@ interface QuietCheckClient {
 
 /**
  * A client counts as "gone quiet" once its last recorded activity is more
- * than 3 weeks old. A client with no recorded activity at all
- * (`lastActivityAt === null`) is treated as quiet too, but only once it's a
- * `recognized` client — an unrecognized tag with no activity yet isn't a
- * real tracked client, just noise, so it never triggers a check-in
- * suggestion on its own.
+ * than 3 weeks old. Important 7's fix: a client with NO recorded activity
+ * at all (`lastActivityAt === null`) is never quiet, full stop — there's
+ * nothing to "go quiet" if nothing has happened yet.
+ *
+ * This used to treat a `null` `lastActivityAt` as quiet (in fact as the
+ * MOST quiet, since `byOldestActivityFirst` below sorts `null` as oldest)
+ * for any `recognized` client. That flooded day one: every freshly-seeded
+ * client starts with `lastActivityAt = null`, so the quiet-client nudge
+ * would show "X has gone quiet" for each of the 7 known tags in turn —
+ * including ARC and Ulti, which aren't real external clients, so being
+ * told they'd "gone quiet" read as Callum being told to check in with
+ * himself — crowding out the curated seed-suggestion rotation for
+ * potentially weeks until every client got its first real upload. Once a
+ * client DOES get activity and then goes quiet for 3+ weeks, that's a
+ * perfectly reasonable nudge (including for ARC/Ulti — "go plan agency
+ * content" / "make personal content" is a fine thing to be nudged about),
+ * so only the null case changes here.
  */
 function isClientQuiet(client: QuietCheckClient, now: Date): boolean {
   if (client.lastActivityAt === null) {
-    return client.recognized;
+    return false;
   }
   return now.getTime() - client.lastActivityAt.getTime() > QUIET_THRESHOLD_MS;
 }

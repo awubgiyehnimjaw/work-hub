@@ -67,22 +67,34 @@ test("picks the oldest-quiet client first when multiple clients qualify", async 
   expect(result.clientId).toBe(oldestQuiet.id);
 });
 
-test("treats a recognized client with no recorded activity at all as quiet", async () => {
+// I7 regression coverage: a client with lastActivityAt === null ("never
+// had any activity yet") must never be treated as quiet, regardless of
+// `recognized` — there's nothing to "go quiet" if nothing has happened
+// yet. This used to be inverted (null sorted as the MOST quiet for a
+// `recognized` client), which flooded day one: every freshly-seeded
+// client starts with lastActivityAt null, so the quiet-client nudge would
+// show "X has gone quiet" for one known tag after another — including
+// ARC/Ulti, which read as Callum being told to check in with himself —
+// crowding out the curated seed-suggestion rotation for weeks.
+
+test("I7: does not treat a recognized client with no recorded activity at all as quiet", async () => {
   const now = Date.now();
-  const [neverActiveClient] = await db
-    .insert(clients)
-    .values({
-      tag: "NeverActive",
-      displayName: "NeverActive",
-      recognized: true,
-      lastActivityAt: null,
-    })
-    .returning();
+  await db.insert(clients).values({
+    tag: "NeverActive",
+    displayName: "NeverActive",
+    recognized: true,
+    lastActivityAt: null,
+  });
+  await db.insert(suggestions).values({
+    category: "general",
+    text: "Fallback seed suggestion",
+    active: true,
+    lastPickedAt: null,
+  });
 
   const result = await pickSuggestion(new Date(now));
 
-  expect(result.source).toBe("client-quiet");
-  expect(result.clientId).toBe(neverActiveClient.id);
+  expect(result.source).toBe("seed");
 });
 
 test("does not treat an unrecognized client with no recorded activity as quiet", async () => {
@@ -103,6 +115,52 @@ test("does not treat an unrecognized client with no recorded activity as quiet",
   const result = await pickSuggestion(new Date(now));
 
   expect(result.source).toBe("seed");
+});
+
+test("I7: a newly-seeded roster (all 7 known tags, all lastActivityAt null) never floods the quiet-client nudge", async () => {
+  // Simulates the exact day-one scenario from C1/I7: seedClients() has run,
+  // so every known client tag exists with lastActivityAt null, and nothing
+  // has uploaded yet. The seed-suggestion rotation must win, not a flood of
+  // "X has gone quiet" for each tag in turn.
+  const now = Date.now();
+  const knownTags = ["Lovelots", "Lesamai", "That Place", "HappyFish", "NLD", "ARC", "Ulti"];
+  await db.insert(clients).values(
+    knownTags.map((tag) => ({
+      tag,
+      displayName: tag,
+      recognized: true,
+      lastActivityAt: null,
+    })),
+  );
+  await db.insert(suggestions).values({
+    category: "general",
+    text: "Fallback seed suggestion",
+    active: true,
+    lastPickedAt: null,
+  });
+
+  const result = await pickSuggestion(new Date(now));
+
+  expect(result.source).toBe("seed");
+  expect(result.clientId).toBeUndefined();
+});
+
+test("I7: a client DOES still qualify as quiet once it has real activity that's then 3+ weeks old (including an ARC/Ulti-style tag)", async () => {
+  const now = Date.now();
+  const [arc] = await db
+    .insert(clients)
+    .values({
+      tag: "ARC",
+      displayName: "ARC",
+      recognized: true,
+      lastActivityAt: new Date(now - 4 * WEEK_MS),
+    })
+    .returning();
+
+  const result = await pickSuggestion(new Date(now));
+
+  expect(result.source).toBe("client-quiet");
+  expect(result.clientId).toBe(arc.id);
 });
 
 test("returns a seed suggestion when all clients are recently active", async () => {
