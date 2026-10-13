@@ -24,7 +24,11 @@ const UUID_RE =
  * Every row is left-joined against `clients` and annotated with
  * `clientName` (the client's `displayName`, or `null` for a task with no
  * client — e.g. a `todo`) — the history page groups by this without a
- * second request.
+ * second request. Also annotated with `clientRecognized` (Important 8):
+ * the client's `recognized` flag, or `null` for a task with no client —
+ * so an unrecognized/typo'd filename tag's flag (written by
+ * `lib/frameio/poll.ts`'s `getOrCreateClient`) actually reaches the UI
+ * instead of stopping at the database and the poll's own JSON response.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -63,16 +67,21 @@ export async function GET(request: Request) {
     : statusFilter;
 
   const rows = await db
-    .select({ task: tasks, clientName: clients.displayName })
+    .select({
+      task: tasks,
+      clientName: clients.displayName,
+      clientRecognized: clients.recognized,
+    })
     .from(tasks)
     .leftJoin(clients, eq(tasks.clientId, clients.id))
     .where(where)
     .orderBy(asc(tasks.createdAt));
 
-  const annotated = rows.map(({ task, clientName }) => ({
+  const annotated = rows.map(({ task, clientName, clientRecognized }) => ({
     ...task,
     isStale: isTaskStale(task, now),
     clientName: clientName ?? null,
+    clientRecognized: clientRecognized ?? null,
   }));
 
   return NextResponse.json(annotated);

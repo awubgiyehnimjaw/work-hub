@@ -7,6 +7,7 @@ export interface ReviewTask {
   title: string;
   frameioUrl: string | null;
   isStale: boolean;
+  clientRecognized: boolean | null;
 }
 
 interface ReviewQueueProps {
@@ -78,18 +79,32 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
               >
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
                   <strong style={{ fontSize: 16 }}>{task.title}</strong>
-                  {task.isStale ? (
-                    <span
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: "#b42318",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      Waiting 2+ days
-                    </span>
-                  ) : null}
+                  <span style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {task.clientRecognized === false ? (
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: "#92400e",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        ⚠ Unrecognized client
+                      </span>
+                    ) : null}
+                    {task.isStale ? (
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: "#b42318",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Waiting 2+ days
+                      </span>
+                    ) : null}
+                  </span>
                 </div>
 
                 <div style={{ marginTop: 10 }}>
