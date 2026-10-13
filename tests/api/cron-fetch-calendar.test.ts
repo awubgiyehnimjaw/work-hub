@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, expect, test, vi } from "vitest";
-import { GET } from "@/app/api/cron/fetch-calendar/route";
+import { GET, maxDuration } from "@/app/api/cron/fetch-calendar/route";
 import { refreshCalendarCache } from "@/lib/calendar/fetch";
 
 // Mocked so this test can assert the auth gate runs before ANY side effect
@@ -57,4 +57,11 @@ test("GET /api/cron/fetch-calendar calls refreshCalendarCache and returns its re
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ cached: 3 });
   expect(mockRefreshCalendarCache).toHaveBeenCalledTimes(1);
+});
+
+// I3 regression coverage: mirrors poll-frameio's maxDuration — a slow
+// upstream Google Calendar response shouldn't be killed by Vercel's
+// shorter platform default.
+test("exports maxDuration = 60 for Vercel", () => {
+  expect(maxDuration).toBe(60);
 });

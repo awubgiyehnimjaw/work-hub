@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, expect, test, vi } from "vitest";
 import { db } from "@/lib/db/client";
 import { seedClients } from "@/lib/db/seed";
-import { clients, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
+import { clients, pushSubscriptions, suggestions, syncState, tasks } from "@/lib/db/schema";
 import { listNewFiles } from "@/lib/frameio/client";
 import { runFrameioPoll } from "@/lib/frameio/poll";
 import { sendPush } from "@/lib/push/send";
@@ -339,6 +339,256 @@ test("does not advance the cursor when a file fails to process, so it is retried
   // successfully turned into a task and would otherwise be permanently
   // skipped (the next run's `createdAt > sinceISO` filter would exclude it
   // forever).
+  const [state] = await db.select().from(syncState);
+  expect(state).toBeUndefined();
+});
+
+test("C1 regression: self-heals an unseeded database by seeding clients and suggestions on every run", async () => {
+  // Simulate a production deploy where `npm run db:seed` was never run —
+  // both tables are completely empty when the first poll fires.
+  await db.delete(suggestions);
+  await db.delete(clients);
+  mockListNewFiles.mockResolvedValue(filesResult([]));
+
+  await runFrameioPoll();
+
+  const clientRows = await db.select().from(clients);
+  expect(clientRows.map((c) => c.tag).sort()).toEqual(
+    ["ARC", "HappyFish", "Lesamai", "Lovelots", "NLD", "That Place", "Ulti"].sort(),
+  );
+
+  const suggestionRows = await db.select().from(suggestions);
+  expect(suggestionRows.length).toBeGreaterThan(0);
+  expect(suggestionRows.every((s) => s.active === true)).toBe(true);
+});
+
+test("C1 regression: seeding on every run stays idempotent and doesn't duplicate rows", async () => {
+  mockListNewFiles.mockResolvedValue(filesResult([]));
+
+  await runFrameioPoll();
+  const firstClientCount = (await db.select().from(clients)).length;
+  const firstSuggestionCount = (await db.select().from(suggestions)).length;
+
+  await runFrameioPoll();
+  const secondClientCount = (await db.select().from(clients)).length;
+  const secondSuggestionCount = (await db.select().from(suggestions)).length;
+
+  expect(secondClientCount).toBe(firstClientCount);
+  expect(secondSuggestionCount).toBe(firstSuggestionCount);
+});
+
+// I4 regression coverage: the spec requires a snoozed review task to
+// "reappear (with a fresh notification) once that time passes" — these
+// exercise the runFrameioPoll-side notifyExpiredSnoozes behavior added for
+// Important 4, independent of the Frame.io file-listing tests above.
+const MINUTE_MS = 60 * 1000;
+
+test("I4: sends a push notification for a review task whose snooze just expired since the last poll cursor", async () => {
+  const now = new Date();
+  const previousCursor = new Date(now.getTime() - 10 * MINUTE_MS);
+  const snoozedUntil = new Date(now.getTime() - 5 * MINUTE_MS); // expired within the window
+
+  await db.insert(syncState).values({ frameioLastPolledAt: previousCursor });
+  await db.insert(pushSubscriptions).values({
+    endpoint: "https://push.example/snooze-sub",
+    p256dh: "key",
+    auth: "auth",
+  });
+  const [task] = await db
+    .insert(tasks)
+    .values({
+      type: "review",
+      title: "Review — Lovelots",
+      status: "active",
+      frameioUrl: "https://frame.io/view/snoozed-task",
+      snoozedUntil,
+      snoozeNotifiedAt: null,
+    })
+    .returning();
+
+  mockListNewFiles.mockResolvedValue(filesResult([]));
+  await runFrameioPoll();
+
+  expect(mockSendPush).toHaveBeenCalledWith(
+    { endpoint: "https://push.example/snooze-sub", p256dh: "key", auth: "auth" },
+    expect.objectContaining({ url: "https://frame.io/view/snoozed-task" }),
+  );
+
+  const [updated] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+  expect(updated.snoozeNotifiedAt?.getTime()).toBe(snoozedUntil.getTime());
+});
+
+test("I4: does not notify a snoozed task whose snoozedUntil is still in the future", async () => {
+  const now = new Date();
+  const previousCursor = new Date(now.getTime() - 10 * MINUTE_MS);
+  const futureSnooze = new Date(now.getTime() + 60 * MINUTE_MS);
+
+  await db.insert(syncState).values({ frameioLastPolledAt: previousCursor });
+  await db.insert(pushSubscriptions).values({
+    endpoint: "https://push.example/snooze-sub",
+    p256dh: "key",
+    auth: "auth",
+  });
+  await db.insert(tasks).values({
+    type: "review",
+    title: "Review — Lovelots",
+    status: "active",
+    frameioUrl: "https://frame.io/view/not-yet",
+    snoozedUntil: futureSnooze,
+  });
+
+  mockListNewFiles.mockResolvedValue(filesResult([]));
+  await runFrameioPoll();
+
+  expect(mockSendPush).not.toHaveBeenCalled();
+});
+
+test("I4: does not notify a snoozed TODO task (only review tasks reappear with a notification)", async () => {
+  const now = new Date();
+  const previousCursor = new Date(now.getTime() - 10 * MINUTE_MS);
+  const snoozedUntil = new Date(now.getTime() - 5 * MINUTE_MS);
+
+  await db.insert(syncState).values({ frameioLastPolledAt: previousCursor });
+  await db.insert(pushSubscriptions).values({
+    endpoint: "https://push.example/snooze-sub",
+    p256dh: "key",
+    auth: "auth",
+  });
+  await db.insert(tasks).values({
+    type: "todo",
+    title: "Pick up hard drive",
+    status: "active",
+    snoozedUntil,
+  });
+
+  mockListNewFiles.mockResolvedValue(filesResult([]));
+  await runFrameioPoll();
+
+  expect(mockSendPush).not.toHaveBeenCalled();
+});
+
+test("I4: does not re-notify the same snooze expiry on a later poll once the cursor has advanced past it", async () => {
+  const now = new Date();
+  const previousCursor = new Date(now.getTime() - 10 * MINUTE_MS);
+  const snoozedUntil = new Date(now.getTime() - 5 * MINUTE_MS);
+
+  await db.insert(syncState).values({ frameioLastPolledAt: previousCursor });
+  await db.insert(pushSubscriptions).values({
+    endpoint: "https://push.example/snooze-sub",
+    p256dh: "key",
+    auth: "auth",
+  });
+  await db.insert(tasks).values({
+    type: "review",
+    title: "Review — Lovelots",
+    status: "active",
+    frameioUrl: "https://frame.io/view/snoozed-task",
+    snoozedUntil,
+  });
+
+  mockListNewFiles.mockResolvedValue(filesResult([]));
+  await runFrameioPoll(); // first run: notifies once, cursor advances past snoozedUntil
+  expect(mockSendPush).toHaveBeenCalledTimes(1);
+
+  mockSendPush.mockClear();
+  mockListNewFiles.mockResolvedValue(filesResult([]));
+  await runFrameioPoll(); // second run: cursor is now past snoozedUntil already
+
+  expect(mockSendPush).not.toHaveBeenCalled();
+});
+
+test("I4: does not re-notify the same snooze expiry across repeated runs even when the cursor hasn't advanced", async () => {
+  // Regression for the idempotency half of the fix specifically (as
+  // opposed to the cursor-advancement half covered above): force two
+  // consecutive runs to both see the same (non-advancing) cursor by making
+  // every run report a truncated traversal, then confirm snoozeNotifiedAt
+  // alone is enough to prevent a second notification for the same expiry.
+  const now = new Date();
+  const previousCursor = new Date(now.getTime() - 10 * MINUTE_MS);
+  const snoozedUntil = new Date(now.getTime() - 5 * MINUTE_MS);
+
+  await db.insert(syncState).values({ frameioLastPolledAt: previousCursor });
+  await db.insert(pushSubscriptions).values({
+    endpoint: "https://push.example/snooze-sub",
+    p256dh: "key",
+    auth: "auth",
+  });
+  await db.insert(tasks).values({
+    type: "review",
+    title: "Review — Lovelots",
+    status: "active",
+    frameioUrl: "https://frame.io/view/snoozed-task",
+    snoozedUntil,
+  });
+
+  mockListNewFiles.mockResolvedValue(filesResult([], true)); // truncated: cursor never advances
+  await runFrameioPoll();
+  expect(mockSendPush).toHaveBeenCalledTimes(1);
+
+  mockSendPush.mockClear();
+  mockListNewFiles.mockResolvedValue(filesResult([], true));
+  await runFrameioPoll();
+
+  expect(mockSendPush).not.toHaveBeenCalled();
+});
+
+test("I4: re-snoozing a task to a new future time earns it a fresh notification once that new snooze also expires", async () => {
+  const now = new Date();
+  const previousCursor = new Date(now.getTime() - 10 * MINUTE_MS);
+  const firstSnoozedUntil = new Date(now.getTime() - 5 * MINUTE_MS);
+
+  await db.insert(syncState).values({ frameioLastPolledAt: previousCursor });
+  await db.insert(pushSubscriptions).values({
+    endpoint: "https://push.example/snooze-sub",
+    p256dh: "key",
+    auth: "auth",
+  });
+  const [task] = await db
+    .insert(tasks)
+    .values({
+      type: "review",
+      title: "Review — Lovelots",
+      status: "active",
+      frameioUrl: "https://frame.io/view/snoozed-task",
+      snoozedUntil: firstSnoozedUntil,
+    })
+    .returning();
+
+  mockListNewFiles.mockResolvedValue(filesResult([]));
+  await runFrameioPoll();
+  expect(mockSendPush).toHaveBeenCalledTimes(1);
+
+  // Callum re-snoozes it again (e.g. he saw it, wasn't ready, snoozed once
+  // more) to a new time that's already elapsed by the time the next poll
+  // runs.
+  const cursorAfterFirstRun = (await db.select().from(syncState))[0].frameioLastPolledAt!;
+  const secondSnoozedUntil = new Date(cursorAfterFirstRun.getTime() + 1 * MINUTE_MS);
+  await db
+    .update(tasks)
+    .set({ snoozedUntil: secondSnoozedUntil })
+    .where(eq(tasks.id, task.id));
+
+  mockSendPush.mockClear();
+  mockListNewFiles.mockResolvedValue(filesResult([]));
+  await runFrameioPoll();
+
+  expect(mockSendPush).toHaveBeenCalledTimes(1);
+  const [updated] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+  expect(updated.snoozeNotifiedAt?.getTime()).toBe(secondSnoozedUntil.getTime());
+});
+
+test("I3 regression: isolates a listNewFiles failure instead of throwing, and does not advance the cursor", async () => {
+  mockListNewFiles.mockRejectedValue(new Error("Frame.io API request failed: 429 rate limited"));
+
+  await expect(runFrameioPoll()).resolves.toEqual({
+    created: 0,
+    unrecognized: 0,
+    failed: true,
+  });
+
+  // Nothing was actually looked at this run, so the cursor must stay put
+  // for a clean retry next time — same principle as the truncated-run and
+  // per-file-failure cases below.
   const [state] = await db.select().from(syncState);
   expect(state).toBeUndefined();
 });

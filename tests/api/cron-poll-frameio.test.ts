@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, expect, test, vi } from "vitest";
-import { GET } from "@/app/api/cron/poll-frameio/route";
+import { GET, maxDuration } from "@/app/api/cron/poll-frameio/route";
 import { runFrameioPoll } from "@/lib/frameio/poll";
 
 // Mocked so this test can assert the auth gate runs before ANY side
@@ -57,4 +57,23 @@ test("GET /api/cron/poll-frameio calls runFrameioPoll and returns its result as 
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ created: 2, unrecognized: 1 });
   expect(mockRunFrameioPoll).toHaveBeenCalledTimes(1);
+});
+
+// I3 regression coverage: when runFrameioPoll reports an isolated
+// listNewFiles failure (`failed: true`), the route must surface that as a
+// clean error response rather than a 200 that looks like success.
+test("GET /api/cron/poll-frameio returns 502 when runFrameioPoll reports a failed run", async () => {
+  mockRunFrameioPoll.mockResolvedValue({ created: 0, unrecognized: 0, failed: true });
+
+  const res = await GET(cronRequest("Bearer test-cron-secret"));
+
+  expect(res.status).toBe(502);
+  expect(await res.json()).toEqual({ created: 0, unrecognized: 0, failed: true });
+});
+
+// I3 regression coverage: the route must declare enough headroom for a
+// full folder traversal (up to ~1,000 requests) to avoid Vercel's default
+// function timeout killing it mid-run.
+test("exports maxDuration = 60 for Vercel", () => {
+  expect(maxDuration).toBe(60);
 });

@@ -2,6 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { checkCronSecret } from "@/lib/auth/cron-secret";
 import { refreshCalendarCache } from "@/lib/calendar/fetch";
 
+// Important 3: mirrors app/api/cron/poll-frameio/route.ts's maxDuration —
+// a route with no explicit value gets Vercel's (shorter) platform default,
+// which a slow upstream Google Calendar response could exceed mid-run.
+export const maxDuration = 60;
+
 // Called by an external scheduler (GitHub Actions), not Callum's browser —
 // auth is the CRON_SECRET bearer token, not the passcode session, and this
 // path is explicitly allowlisted past that cookie check in middleware.ts.
