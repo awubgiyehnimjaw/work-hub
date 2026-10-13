@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
-import { tasks } from "@/lib/db/schema";
+import { clients, tasks } from "@/lib/db/schema";
 
 type PatchBody =
   | { action: "complete" }
@@ -37,6 +37,13 @@ function parsePatchBody(body: unknown): PatchBody | null {
  * the action doesn't care which). A past `until` is accepted as-is: that's
  * exactly how a snoozed task is made to reappear immediately on the next
  * `GET /api/tasks` call, per `isTaskStale`'s "snoozedUntil <= now" rule.
+ *
+ * Important 6: the spec requires `clients.lastActivityAt` to update
+ * "whenever a review task is created OR completed" — `createReviewTask`
+ * (lib/frameio/poll.ts) already covers the "created" half; completing a
+ * `type: 'review'` task with a client attached updates that same column
+ * here, in the same request, so the quiet-client nudge (I7) doesn't
+ * misfire for a client whose work was actually just reviewed.
  */
 export async function PATCH(
   request: Request,
@@ -56,9 +63,10 @@ export async function PATCH(
     );
   }
 
+  const now = new Date();
   const updateValues =
     parsed.action === "complete"
-      ? { status: "completed" as const, completedAt: new Date() }
+      ? { status: "completed" as const, completedAt: now }
       : { snoozedUntil: parsed.until };
 
   const [updated] = await db
@@ -69,6 +77,13 @@ export async function PATCH(
 
   if (!updated) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  if (parsed.action === "complete" && updated.type === "review" && updated.clientId !== null) {
+    await db
+      .update(clients)
+      .set({ lastActivityAt: now })
+      .where(eq(clients.id, updated.clientId));
   }
 
   return NextResponse.json(updated, { status: 200 });

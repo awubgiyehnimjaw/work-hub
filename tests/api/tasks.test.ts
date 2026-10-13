@@ -213,6 +213,87 @@ test("snoozing a task with a PAST timestamp makes it reappear in the very next G
   expect(body[0].id).toBe(task.id);
 });
 
+// I6 regression coverage: the spec requires clients.lastActivityAt to
+// update "whenever a review task is created OR completed" — createReviewTask
+// (lib/frameio/poll.ts) already covers "created"; these cover "completed".
+
+test("PATCH /api/tasks/:id completing a review task updates that client's lastActivityAt", async () => {
+  const [client] = await db
+    .insert(clients)
+    .values({
+      tag: "Lovelots",
+      displayName: "Lovelots",
+      recognized: true,
+      lastActivityAt: new Date(Date.now() - 30 * DAY_MS),
+    })
+    .returning();
+  const [task] = await db
+    .insert(tasks)
+    .values({
+      type: "review",
+      title: "Review — Lovelots",
+      status: "active",
+      clientId: client.id,
+    })
+    .returning();
+
+  const before = Date.now();
+  const res = await PATCH(patchRequest({ action: "complete" }), patchContext(task.id));
+  const after = Date.now();
+  expect(res.status).toBe(200);
+
+  const [updatedClient] = await db.select().from(clients).where(eq(clients.id, client.id));
+  expect(updatedClient.lastActivityAt).not.toBeNull();
+  const activityMs = updatedClient.lastActivityAt!.getTime();
+  expect(activityMs).toBeGreaterThanOrEqual(before);
+  expect(activityMs).toBeLessThanOrEqual(after);
+});
+
+test("PATCH /api/tasks/:id completing a to-do does NOT touch any client's lastActivityAt", async () => {
+  const [client] = await db
+    .insert(clients)
+    .values({ tag: "Lovelots", displayName: "Lovelots", recognized: true, lastActivityAt: null })
+    .returning();
+  const [task] = await db
+    .insert(tasks)
+    .values({ type: "todo", title: "Pick up hard drive", status: "active" })
+    .returning();
+
+  const res = await PATCH(patchRequest({ action: "complete" }), patchContext(task.id));
+  expect(res.status).toBe(200);
+
+  const [unchangedClient] = await db.select().from(clients).where(eq(clients.id, client.id));
+  expect(unchangedClient.lastActivityAt).toBeNull();
+});
+
+test("PATCH /api/tasks/:id completing a review task with no client does not throw", async () => {
+  const [task] = await db
+    .insert(tasks)
+    .values({ type: "review", title: "Review — Unrecognized", status: "active", clientId: null })
+    .returning();
+
+  const res = await PATCH(patchRequest({ action: "complete" }), patchContext(task.id));
+  expect(res.status).toBe(200);
+});
+
+test("PATCH /api/tasks/:id snoozing a review task does NOT update the client's lastActivityAt", async () => {
+  const [client] = await db
+    .insert(clients)
+    .values({ tag: "Lovelots", displayName: "Lovelots", recognized: true, lastActivityAt: null })
+    .returning();
+  const [task] = await db
+    .insert(tasks)
+    .values({ type: "review", title: "Review — Lovelots", status: "active", clientId: client.id })
+    .returning();
+
+  const until = new Date(Date.now() + DAY_MS).toISOString();
+  const res = await PATCH(patchRequest({ action: "snooze", until }), patchContext(task.id));
+  expect(res.status).toBe(200);
+
+  const [unchangedClient] = await db.select().from(clients).where(eq(clients.id, client.id));
+  expect(unchangedClient.lastActivityAt).toBeNull();
+});
+
 test("PATCH /api/tasks/:id returns 404 for a nonexistent id and changes nothing", async () => {
   const res = await PATCH(
     patchRequest({ action: "complete" }),
@@ -361,6 +442,62 @@ test("GET /api/tasks annotates each task with clientName from the clients join, 
 
   expect(review.clientName).toBe("Lovelots");
   expect(todo.clientName).toBeNull();
+});
+
+// I8 regression coverage: the spec requires an unrecognized filename tag
+// to "still create a review task, just flagged as unrecognized" so nothing
+// falls through silently — but GET /api/tasks previously didn't return that
+// flag at all, so the UI couldn't show it even though lib/frameio/poll.ts
+// wrote it to clients.recognized.
+
+test("GET /api/tasks annotates a task with clientRecognized: false for an unrecognized client tag", async () => {
+  const [unrecognizedClient] = await db
+    .insert(clients)
+    .values({ tag: "RandomCo", displayName: "RandomCo", recognized: false })
+    .returning();
+
+  await db.insert(tasks).values({
+    type: "review",
+    title: "Review — RandomCo",
+    status: "active",
+    clientId: unrecognizedClient.id,
+  });
+
+  const res = await GET(getRequest());
+  const body = await res.json();
+
+  expect(body).toHaveLength(1);
+  expect(body[0].clientRecognized).toBe(false);
+});
+
+test("GET /api/tasks annotates a task with clientRecognized: true for a recognized client tag", async () => {
+  const [recognizedClient] = await db
+    .insert(clients)
+    .values({ tag: "Lovelots", displayName: "Lovelots", recognized: true })
+    .returning();
+
+  await db.insert(tasks).values({
+    type: "review",
+    title: "Review — Lovelots",
+    status: "active",
+    clientId: recognizedClient.id,
+  });
+
+  const res = await GET(getRequest());
+  const body = await res.json();
+
+  expect(body).toHaveLength(1);
+  expect(body[0].clientRecognized).toBe(true);
+});
+
+test("GET /api/tasks annotates a task with clientRecognized: null when there is no client (e.g. a to-do)", async () => {
+  await db.insert(tasks).values({ type: "todo", title: "no client", status: "active" });
+
+  const res = await GET(getRequest());
+  const body = await res.json();
+
+  expect(body).toHaveLength(1);
+  expect(body[0].clientRecognized).toBeNull();
 });
 
 test("GET /api/tasks returns 400 for an unrecognized status value", async () => {
