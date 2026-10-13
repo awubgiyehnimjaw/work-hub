@@ -102,7 +102,7 @@ export default function HomePage() {
         </p>
       ) : null}
 
-      {state !== "loading" ? (
+      {state === "ready" ? (
         <>
           <ReviewQueue tasks={reviewTasks} onComplete={completeTask} onSnooze={snoozeTask} />
           <TodoList tasks={todoTasks} onAdd={addTodo} onComplete={completeTask} />
