@@ -6,6 +6,11 @@ import EnableNotificationsButton from "./components/EnableNotificationsButton";
 import ReviewQueue from "./components/ReviewQueue";
 import SuggestionCard from "./components/SuggestionCard";
 import TodoList from "./components/TodoList";
+import {
+  AUTO_REFRESH_INTERVAL_MS,
+  createAutoRefresh,
+  createBrowserAutoRefreshDeps,
+} from "@/lib/dashboard/auto-refresh";
 
 interface ApiTask {
   id: string;
@@ -13,6 +18,7 @@ interface ApiTask {
   title: string;
   frameioUrl: string | null;
   isStale: boolean;
+  clientRecognized: boolean | null;
 }
 
 type LoadState = "loading" | "ready" | "error";
@@ -37,6 +43,13 @@ export default function HomePage() {
 
   useEffect(() => {
     loadTasks();
+
+    // Important 5: refetch when the installed PWA regains focus/visibility
+    // (e.g. resumed from background after hours) rather than only ever
+    // fetching once on mount, plus a light 60s polling backstop for any
+    // other staleness (e.g. the Frame.io poll creating a task while the
+    // dashboard just sits open and visible).
+    return createAutoRefresh(loadTasks, AUTO_REFRESH_INTERVAL_MS, createBrowserAutoRefreshDeps());
   }, [loadTasks]);
 
   // Complete/snooze/add all go through the real API first and only update
