@@ -10,7 +10,18 @@
  * endpoints for Frame.io (not guessed):
  * - https://ims-na1.adobelogin.com/ims/authorize/v2
  * - https://ims-na1.adobelogin.com/ims/token/v3
+ *
+ * Adobe access tokens are short-lived (~1 hour), so this module also owns
+ * `refreshFrameioToken`, which uses the stored `refreshToken` to mint a new
+ * access token against the same token endpoint — called from
+ * `lib/frameio/client.ts` whenever the stored token is at/near expiry, so a
+ * poll run never silently starts failing with 401s once the initial connect
+ * is more than an hour old.
  */
+
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { oauthTokens } from "@/lib/db/schema";
 
 const ADOBE_AUTHORIZE_ENDPOINT = "https://ims-na1.adobelogin.com/ims/authorize/v2";
 const ADOBE_TOKEN_ENDPOINT = "https://ims-na1.adobelogin.com/ims/token/v3";
@@ -54,6 +65,36 @@ interface AdobeTokenResponse {
 }
 
 /**
+ * Adobe's refresh response always carries a fresh access token, but may or
+ * may not rotate the refresh token itself (depends on the IMS client's
+ * configuration) — so `refresh_token` is optional here, unlike the initial
+ * exchange where it's guaranteed.
+ */
+interface AdobeRefreshResponse {
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+}
+
+async function postToAdobeTokenEndpoint<T>(
+  params: Record<string, string>,
+  failureLabel: string,
+): Promise<T> {
+  const response = await fetch(ADOBE_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`${failureLabel}: ${response.status} ${errorBody}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+/**
  * Exchanges the authorization `code` Adobe sent to the callback route for
  * an access/refresh token pair.
  *
@@ -68,32 +109,69 @@ export async function exchangeFrameioCode(
   const clientId = requireEnv("FRAMEIO_CLIENT_ID");
   const clientSecret = requireEnv("FRAMEIO_CLIENT_SECRET");
 
-  const body = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
-    code,
-    grant_type: "authorization_code",
-    redirect_uri: redirectUri,
-  });
-
-  const response = await fetch(ADOBE_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
-    throw new Error(
-      `Frame.io token exchange failed: ${response.status} ${errorBody}`,
-    );
-  }
-
-  const data = (await response.json()) as AdobeTokenResponse;
+  const data = await postToAdobeTokenEndpoint<AdobeTokenResponse>(
+    {
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
+    },
+    "Frame.io token exchange failed",
+  );
 
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresAt: new Date(Date.now() + data.expires_in * 1000),
   };
+}
+
+/**
+ * Uses the stored `refreshToken` for the `frameio` `oauthTokens` row to
+ * mint a new access token from Adobe IMS, and overwrites that row with the
+ * refreshed access/refresh token pair and expiry. Throws if there is no
+ * stored row to refresh (Frame.io was never connected) — there is nothing
+ * useful to do in that case, the caller should direct Callum through the
+ * connect flow instead.
+ */
+export async function refreshFrameioToken(): Promise<void> {
+  const clientId = requireEnv("FRAMEIO_CLIENT_ID");
+  const clientSecret = requireEnv("FRAMEIO_CLIENT_SECRET");
+
+  const [row] = await db
+    .select()
+    .from(oauthTokens)
+    .where(eq(oauthTokens.provider, "frameio"));
+  if (!row) {
+    throw new Error(
+      "Frame.io is not connected (no oauthTokens row for provider 'frameio') — nothing to refresh",
+    );
+  }
+
+  const data = await postToAdobeTokenEndpoint<AdobeRefreshResponse>(
+    {
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: row.refreshToken,
+    },
+    "Frame.io token refresh failed",
+  );
+
+  const accessToken = data.access_token;
+  // Adobe may not return a new refresh token on every refresh; keep the
+  // existing one in that case rather than discarding it.
+  const refreshToken = data.refresh_token ?? row.refreshToken;
+  const expiresAt = new Date(Date.now() + data.expires_in * 1000);
+
+  // Same upsert pattern as the callback route's initial connect (Task 5) —
+  // keyed on the `oauth_tokens.provider` unique constraint.
+  await db
+    .insert(oauthTokens)
+    .values({ provider: "frameio", accessToken, refreshToken, expiresAt })
+    .onConflictDoUpdate({
+      target: oauthTokens.provider,
+      set: { accessToken, refreshToken, expiresAt },
+    });
 }

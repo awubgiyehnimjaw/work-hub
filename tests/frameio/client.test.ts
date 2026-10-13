@@ -1,10 +1,30 @@
+import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { db } from "@/lib/db/client";
 import { oauthTokens } from "@/lib/db/schema";
 import { buildFrameioUrl, listNewFiles } from "@/lib/frameio/client";
+import { refreshFrameioToken } from "@/lib/frameio/oauth";
 
 const ACCOUNT_ID = "acct-1";
 const PROJECT_ID = "proj-1";
+
+// `refreshFrameioToken` lives in oauth.ts; client.ts calls it when the
+// stored token is at/near expiry. Mocked here so refresh-triggering tests
+// can assert it was called without needing a real Adobe token endpoint —
+// tests of the refresh implementation itself live in oauth.test.ts. Tests
+// below that use a token far from expiry never trigger it, so this mock is
+// inert for them.
+vi.mock("@/lib/frameio/oauth", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/frameio/oauth")>(
+    "@/lib/frameio/oauth",
+  );
+  return {
+    ...actual,
+    refreshFrameioToken: vi.fn(),
+  };
+});
+
+const mockRefreshFrameioToken = refreshFrameioToken as unknown as ReturnType<typeof vi.fn>;
 
 beforeAll(() => {
   process.env.FRAMEIO_ACCOUNT_ID = ACCOUNT_ID;
@@ -12,6 +32,7 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
+  mockRefreshFrameioToken.mockReset().mockResolvedValue(undefined);
   await db.delete(oauthTokens);
   await db.insert(oauthTokens).values({
     provider: "frameio",
@@ -66,7 +87,8 @@ test("listNewFiles resolves the token and root folder, and hits the real V4 endp
 
   const result = await listNewFiles("2026-01-01T00:00:00.000Z");
 
-  expect(result).toEqual([
+  expect(result.truncated).toBe(false);
+  expect(result.files).toEqual([
     {
       id: "f1",
       name: "Cut (Lovelots).mp4",
@@ -84,7 +106,7 @@ test("listNewFiles resolves the token and root folder, and hits the real V4 endp
   }
 });
 
-test("listNewFiles paginates via links.next until a page's oldest created_at is at or before the cursor, filtering the final result precisely", async () => {
+test("listNewFiles paginates via links.next past the file cutoff, filtering the final result precisely", async () => {
   const sinceISO = "2026-01-01T00:00:00.000Z";
   const filesPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?sort=created_at_desc`;
   const nextPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?sort=created_at_desc&page=2`;
@@ -95,8 +117,6 @@ test("listNewFiles paginates via links.next until a page's oldest created_at is 
       return projectResponse("root-folder-1");
     }
     if (url === filesPageUrl) {
-      // Oldest entry on this page (f-new-2) is still after sinceISO, so
-      // listNewFiles must fetch links.next for an older page.
       return jsonResponse({
         data: [
           { id: "f-new-1", name: "a.mp4", created_at: "2026-01-05T00:00:00.000Z", type: "file", view_url: null },
@@ -106,13 +126,15 @@ test("listNewFiles paginates via links.next until a page's oldest created_at is 
       });
     }
     if (url === nextPageUrl) {
-      // Oldest entry here (f-old-1) is at/before sinceISO, so pagination
-      // must stop after this page (no further links.next should be hit).
+      // Oldest entry here (f-old-1) is at/before sinceISO. Pagination still
+      // continues past this page (folder discovery is decoupled from the
+      // file cutoff — see the dedicated test below) but no further folder
+      // or file entries exist here, so there's nothing more to find.
       return jsonResponse({
         data: [
           { id: "f-old-1", name: "c.mp4", created_at: "2025-12-31T00:00:00.000Z", type: "file", view_url: null },
         ],
-        links: { next: "https://api.frame.io/v4/should-not-be-fetched" },
+        links: {},
       });
     }
     throw new Error(`Unexpected fetch: ${url}`);
@@ -121,10 +143,63 @@ test("listNewFiles paginates via links.next until a page's oldest created_at is 
 
   const result = await listNewFiles(sinceISO);
 
-  expect(result.map((f) => f.id).sort()).toEqual(["f-new-1", "f-new-2"]);
-  expect(fetchMock.mock.calls.some((c) => c[0].toString().includes("should-not-be-fetched"))).toBe(
-    false,
-  );
+  expect(result.files.map((f) => f.id).sort()).toEqual(["f-new-1", "f-new-2"]);
+  expect(result.truncated).toBe(false);
+});
+
+test("listNewFiles discovers a subfolder on a later page even though page 1's oldest file is already before the cursor", async () => {
+  // Regression test for the bug where pagination stopped as soon as a
+  // page's oldest FILE was at/before the cursor — which meant a subfolder
+  // listed on a later page (subfolders sort by their own creation time,
+  // not by their newest file) was never discovered, and a video uploaded
+  // into it later would never be seen by any future poll either.
+  const sinceISO = "2026-01-10T00:00:00.000Z";
+  const filesPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?sort=created_at_desc`;
+  const nextPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?sort=created_at_desc&page=2`;
+
+  const fetchMock = vi.fn(async (input: string | URL) => {
+    const url = input.toString();
+    if (url.includes("/projects/")) {
+      return projectResponse("root-folder-1");
+    }
+    if (url === filesPageUrl) {
+      // Page 1: recent loose files in the root, whose oldest entry is
+      // already at/before the cursor. A buggy implementation would stop
+      // paginating right here.
+      return jsonResponse({
+        data: [
+          { id: "loose-1", name: "a.mp4", created_at: "2026-01-12T00:00:00.000Z", type: "file", view_url: null },
+          { id: "loose-2", name: "b.mp4", created_at: "2026-01-01T00:00:00.000Z", type: "file", view_url: null },
+        ],
+        links: { next: nextPageUrl },
+      });
+    }
+    if (url === nextPageUrl) {
+      // Page 2: an old per-client subfolder, created long before the
+      // cursor, that must still be discovered and visited.
+      return jsonResponse({
+        data: [
+          { id: "old-subfolder", name: "Lovelots", created_at: "2025-01-01T00:00:00.000Z", type: "folder" },
+        ],
+        links: {},
+      });
+    }
+    if (url.includes("/folders/old-subfolder/files")) {
+      return jsonResponse({
+        data: [
+          { id: "f-in-subfolder", name: "Cut (Lovelots).mp4", created_at: "2026-01-11T00:00:00.000Z", type: "file", view_url: null },
+        ],
+        links: {},
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const result = await listNewFiles(sinceISO);
+
+  expect(result.files.map((f) => f.id).sort()).toEqual(["f-in-subfolder", "loose-1"]);
+  expect(result.truncated).toBe(false);
 });
 
 test("listNewFiles recurses into type:'folder' entries to find files in subfolders", async () => {
@@ -158,14 +233,17 @@ test("listNewFiles recurses into type:'folder' entries to find files in subfolde
 
   const result = await listNewFiles(sinceISO);
 
-  expect(result.map((f) => f.id).sort()).toEqual(["f-root", "f-sub"]);
+  expect(result.files.map((f) => f.id).sort()).toEqual(["f-root", "f-sub"]);
+  expect(result.truncated).toBe(false);
 });
 
-test("listNewFiles caps traversal at MAX_FOLDER_DEPTH (5), never fetching a 7th-level folder", async () => {
+test("listNewFiles caps traversal at MAX_FOLDER_DEPTH (5), never fetching a 7th-level folder, and reports truncated", async () => {
   // A chain of folders f0 -> f1 -> f2 -> ... each containing one file and
   // one subfolder pointer. Root is depth 0, so folders at depth 0..5 (6
   // folders: f0..f5) are fetched, but f6 (depth 6) must never be.
   const sinceISO = "2020-01-01T00:00:00.000Z";
+
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
   const fetchMock = vi.fn(async (input: string | URL) => {
     const url = input.toString();
@@ -195,9 +273,94 @@ test("listNewFiles caps traversal at MAX_FOLDER_DEPTH (5), never fetching a 7th-
     .filter((id): id is string => Boolean(id));
 
   expect(fetchedFolderIds.sort()).toEqual(["f0", "f1", "f2", "f3", "f4", "f5"]);
-  expect(result.map((f) => f.id).sort()).toEqual(
+  expect(result.files.map((f) => f.id).sort()).toEqual(
     ["file-at-0", "file-at-1", "file-at-2", "file-at-3", "file-at-4", "file-at-5"].sort(),
   );
+  // f6 was discovered (listed as a folder entry on f5's page) but never
+  // visited because of the depth cap — this must be signaled, not silent.
+  expect(result.truncated).toBe(true);
+  expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("MAX_FOLDER_DEPTH"));
+
+  warnSpy.mockRestore();
+});
+
+test("listNewFiles reports truncated and warns when MAX_FOLDERS_VISITED is hit", async () => {
+  const sinceISO = "2020-01-01T00:00:00.000Z";
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+  // Root folder fans out into 60 subfolders (more than MAX_FOLDERS_VISITED
+  // = 50), each of which is otherwise empty.
+  const fetchMock = vi.fn(async (input: string | URL) => {
+    const url = input.toString();
+    if (url.includes("/projects/")) {
+      return projectResponse("root-folder-1");
+    }
+    if (url.includes("/folders/root-folder-1/files")) {
+      return jsonResponse({
+        data: Array.from({ length: 60 }, (_, i) => ({
+          id: `sub-${i}`,
+          name: `sub-${i}`,
+          created_at: "2026-01-01T00:00:00.000Z",
+          type: "folder",
+        })),
+        links: {},
+      });
+    }
+    const match = url.match(/\/folders\/(sub-\d+)\/files/);
+    if (match) {
+      return jsonResponse({ data: [], links: {} });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const result = await listNewFiles(sinceISO);
+
+  expect(result.truncated).toBe(true);
+  expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("MAX_FOLDERS_VISITED"));
+
+  // root + 49 subfolders = 50 total folders visited (MAX_FOLDERS_VISITED).
+  const visitedSubfolders = fetchMock.mock.calls
+    .map((c) => c[0].toString().match(/\/folders\/(sub-\d+)\/files/)?.[1])
+    .filter((id): id is string => Boolean(id));
+  expect(visitedSubfolders).toHaveLength(49);
+
+  warnSpy.mockRestore();
+});
+
+test("listNewFiles caps pagination at MAX_PAGES_PER_FOLDER for a single folder and reports truncated", async () => {
+  const sinceISO = "2020-01-01T00:00:00.000Z";
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+  // A folder whose `links.next` chain never ends (e.g. the server ignored
+  // `sort=created_at_desc`, so the file-cutoff optimization never kicks in
+  // either) — must still terminate via the hard page cap.
+  let pageCount = 0;
+  const fetchMock = vi.fn(async (input: string | URL) => {
+    const url = input.toString();
+    if (url.includes("/projects/")) {
+      return projectResponse("root-folder-1");
+    }
+    if (url.includes("/folders/root-folder-1/files")) {
+      pageCount++;
+      return jsonResponse({
+        data: [
+          { id: `f-page-${pageCount}`, name: "a.mp4", created_at: "2026-01-01T00:00:00.000Z", type: "file", view_url: null },
+        ],
+        links: { next: `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?page=${pageCount + 1}` },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const result = await listNewFiles(sinceISO);
+
+  expect(pageCount).toBe(20);
+  expect(result.truncated).toBe(true);
+  expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("MAX_PAGES_PER_FOLDER"));
+
+  warnSpy.mockRestore();
 });
 
 test("listNewFiles throws when Frame.io is not connected (no oauthTokens row)", async () => {
@@ -207,4 +370,40 @@ test("listNewFiles throws when Frame.io is not connected (no oauthTokens row)", 
   await expect(listNewFiles("2026-01-01T00:00:00.000Z")).rejects.toThrow(
     /not connected/i,
   );
+});
+
+test("listNewFiles refreshes the access token when it is within 5 minutes of expiring, before making any Frame.io request", async () => {
+  await db
+    .update(oauthTokens)
+    .set({ expiresAt: new Date(Date.now() + 60_000) }) // 1 minute left, under the 5-minute buffer
+    .where(eq(oauthTokens.provider, "frameio"));
+
+  const fetchMock = vi.fn(async (input: string | URL) => {
+    const url = input.toString();
+    if (url.includes("/projects/")) {
+      return projectResponse("root-folder-1");
+    }
+    return jsonResponse({ data: [], links: {} });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  await listNewFiles("2026-01-01T00:00:00.000Z");
+
+  expect(mockRefreshFrameioToken).toHaveBeenCalledTimes(1);
+});
+
+test("listNewFiles does not refresh the access token when it still has more than 5 minutes left", async () => {
+  // beforeEach already seeds a token expiring in 1 hour.
+  const fetchMock = vi.fn(async (input: string | URL) => {
+    const url = input.toString();
+    if (url.includes("/projects/")) {
+      return projectResponse("root-folder-1");
+    }
+    return jsonResponse({ data: [], links: {} });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  await listNewFiles("2026-01-01T00:00:00.000Z");
+
+  expect(mockRefreshFrameioToken).not.toHaveBeenCalled();
 });

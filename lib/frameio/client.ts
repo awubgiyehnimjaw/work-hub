@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { oauthTokens } from "@/lib/db/schema";
+import { refreshFrameioToken } from "@/lib/frameio/oauth";
 
 /**
  * Frame.io V4 API client for polling new review files.
@@ -10,8 +11,25 @@ import { oauthTokens } from "@/lib/db/schema";
  * `api-version: experimental`, response
  * `{ data: [{ id, name, created_at, type, view_url, ... }], links: { next? } }`.
  * There is no server-side "created after" filter, so we request
- * `sort=created_at_desc` and paginate via `links.next` until a page's
- * oldest `created_at` is at or before the requested cursor.
+ * `sort=created_at_desc` and paginate via `links.next`.
+ *
+ * Folder discovery and file collection are deliberately decoupled: a
+ * subfolder can be created long before the files inside it, so folders
+ * sort differently from "when was this folder's newest file uploaded".
+ * Gating pagination on the file cutoff alone can permanently hide a
+ * subfolder that happens to sit on a later page (e.g. the root folder has
+ * enough recent loose files to fill page 1 past the cursor, while an old
+ * per-client subfolder sits on page 2). So pagination within a folder
+ * continues — to keep discovering folder entries — independently of the
+ * file cutoff, bounded only by `MAX_PAGES_PER_FOLDER` (and the overall
+ * traversal is bounded by `MAX_FOLDERS_VISITED` / `MAX_FOLDER_DEPTH`).
+ * File *collection* still stops early as a pure optimization once a page's
+ * entries are provably all at/before the cursor — but that's never relied
+ * on for correctness; the final `files.filter` below is what actually
+ * enforces the cutoff, and the per-page "oldest" check uses the minimum
+ * parsed timestamp across the whole page (never just the last element, and
+ * never a raw string compare) since the server's sort order isn't trusted
+ * for correctness, only used as an optimization where safe.
  *
  * ASSUMPTION (flagged per the task brief — not independently confirmed
  * beyond the brief's own note): the project-details endpoint used to
@@ -26,6 +44,18 @@ export interface FrameioFile {
   name: string;
   createdAt: string;
   viewUrl: string | null;
+}
+
+export interface ListNewFilesResult {
+  files: FrameioFile[];
+  /**
+   * True if any safety cap (folder depth, folders visited, or pages fetched
+   * for a single folder) was hit this run, meaning some part of the
+   * project's folder tree was not actually looked at. Callers must not
+   * advance their poll cursor past a truncated run — doing so would
+   * permanently skip whatever lived past the cap.
+   */
+  truncated: boolean;
 }
 
 interface FrameioApiEntry {
@@ -49,11 +79,18 @@ interface FrameioProjectResponse {
 
 const FRAMEIO_API_BASE = "https://api.frame.io/v4";
 
-// Safety net against runaway recursion/pagination if a project's folder
+// Safety nets against runaway recursion/pagination if a project's folder
 // structure is unexpectedly deep or wide (e.g. an editor nests cuts many
-// levels deep, or a misbehaving API keeps returning folders).
+// levels deep, or a misbehaving API keeps returning folders/pages).
 const MAX_FOLDER_DEPTH = 5;
 const MAX_FOLDERS_VISITED = 50;
+const MAX_PAGES_PER_FOLDER = 20;
+
+// Refresh proactively once the stored access token is within this long of
+// expiring, rather than waiting for a request to fail with a 401 — Adobe
+// access tokens are short-lived (~1 hour), so a bare poll interval of a few
+// minutes would otherwise eventually straddle an expiry.
+const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 function requireEnv(name: "FRAMEIO_ACCOUNT_ID" | "FRAMEIO_PROJECT_ID"): string {
   const value = process.env[name];
@@ -63,7 +100,7 @@ function requireEnv(name: "FRAMEIO_ACCOUNT_ID" | "FRAMEIO_PROJECT_ID"): string {
   return value;
 }
 
-async function getAccessToken(): Promise<string> {
+async function getOauthTokensRow() {
   const [row] = await db
     .select()
     .from(oauthTokens)
@@ -75,7 +112,21 @@ async function getAccessToken(): Promise<string> {
     );
   }
 
-  return row.accessToken;
+  return row;
+}
+
+async function getAccessToken(): Promise<string> {
+  const row = await getOauthTokensRow();
+
+  const isNearOrPastExpiry =
+    row.expiresAt.getTime() - TOKEN_EXPIRY_BUFFER_MS <= Date.now();
+  if (!isNearOrPastExpiry) {
+    return row.accessToken;
+  }
+
+  await refreshFrameioToken();
+  const refreshed = await getOauthTokensRow();
+  return refreshed.accessToken;
 }
 
 async function frameioFetch(url: string, accessToken: string): Promise<Response> {
@@ -120,24 +171,119 @@ function toFrameioFile(entry: FrameioApiEntry): FrameioFile {
   };
 }
 
+interface FolderQueueEntry {
+  folderId: string;
+  depth: number;
+}
+
+/**
+ * Fetches every page of one folder's file listing. Folder entries found on
+ * ANY page are always queued (subject to the depth cap) — pagination for a
+ * folder is never cut short by the file cutoff, only by running out of
+ * pages or hitting `MAX_PAGES_PER_FOLDER`. File entries are pushed into
+ * `files` as an optimization only while `collectingFiles` is still true;
+ * correctness is enforced later by the caller's final filter, not here.
+ *
+ * Returns true if any safety cap was hit while processing this folder.
+ */
+async function fetchFolderFiles(
+  folder: FolderQueueEntry,
+  accountId: string,
+  accessToken: string,
+  sinceMs: number,
+  files: FrameioFile[],
+  queue: FolderQueueEntry[],
+): Promise<boolean> {
+  const { folderId, depth } = folder;
+  let truncated = false;
+  let collectingFiles = true;
+  let pagesFetched = 0;
+
+  let pageUrl: string | null =
+    `${FRAMEIO_API_BASE}/accounts/${accountId}/folders/${folderId}/files?sort=created_at_desc`;
+
+  while (pageUrl) {
+    if (pagesFetched >= MAX_PAGES_PER_FOLDER) {
+      console.warn(
+        `listNewFiles: hit MAX_PAGES_PER_FOLDER (${MAX_PAGES_PER_FOLDER}) for folder ${folderId} ` +
+          `(depth ${depth}); the remaining pages of this folder (and any subfolders listed on ` +
+          `them) were not visited this run.`,
+      );
+      truncated = true;
+      break;
+    }
+    pagesFetched++;
+
+    const response = await frameioFetch(pageUrl, accessToken);
+    const page = (await response.json()) as FrameioFilesResponse;
+
+    let minTimestampOnPage = Number.POSITIVE_INFINITY;
+    for (const entry of page.data) {
+      const parsed = Date.parse(entry.created_at);
+      if (!Number.isNaN(parsed) && parsed < minTimestampOnPage) {
+        minTimestampOnPage = parsed;
+      }
+
+      if (entry.type === "folder") {
+        if (depth < MAX_FOLDER_DEPTH) {
+          queue.push({ folderId: entry.id, depth: depth + 1 });
+        } else {
+          console.warn(
+            `listNewFiles: folder ${entry.id} discovered at depth ${depth + 1} exceeds ` +
+              `MAX_FOLDER_DEPTH (${MAX_FOLDER_DEPTH}); it was not visited this run.`,
+          );
+          truncated = true;
+        }
+        continue;
+      }
+
+      if (collectingFiles) {
+        files.push(toFrameioFile(entry));
+      }
+    }
+
+    // Once a page's entries are provably all at/before the cursor (using the
+    // minimum parsed timestamp across the *whole* page, never just the last
+    // element, and never a raw string compare), stop bothering to collect
+    // more files — but keep paginating below for folder discovery. This is
+    // purely an optimization: if the server's assumed sort order turns out
+    // to be wrong, the final filter in `listNewFiles` still enforces
+    // correctness, it just won't benefit from this early-stop.
+    if (minTimestampOnPage !== Number.POSITIVE_INFINITY && minTimestampOnPage <= sinceMs) {
+      collectingFiles = false;
+    }
+
+    pageUrl = page.links?.next
+      ? new URL(page.links.next, FRAMEIO_API_BASE).toString()
+      : null;
+  }
+
+  return truncated;
+}
+
 /**
  * Lists files created after `sinceISO`, across the Frame.io project's root
  * folder and any subfolders (editors organize cuts into subfolders), newest
  * first within each folder's own pagination.
  */
-export async function listNewFiles(sinceISO: string): Promise<FrameioFile[]> {
+export async function listNewFiles(sinceISO: string): Promise<ListNewFilesResult> {
   const accountId = requireEnv("FRAMEIO_ACCOUNT_ID");
   const accessToken = await getAccessToken();
   const rootFolderId = await getRootFolderId(accessToken);
+  const sinceMs = Date.parse(sinceISO);
 
   const files: FrameioFile[] = [];
   let foldersVisited = 0;
-  const queue: Array<{ folderId: string; depth: number }> = [
-    { folderId: rootFolderId, depth: 0 },
-  ];
+  let truncated = false;
+  const queue: FolderQueueEntry[] = [{ folderId: rootFolderId, depth: 0 }];
 
   while (queue.length > 0) {
     if (foldersVisited >= MAX_FOLDERS_VISITED) {
+      console.warn(
+        `listNewFiles: hit MAX_FOLDERS_VISITED (${MAX_FOLDERS_VISITED}); ${queue.length} ` +
+          `folder(s) still queued were not visited this run.`,
+      );
+      truncated = true;
       break;
     }
 
@@ -145,43 +291,27 @@ export async function listNewFiles(sinceISO: string): Promise<FrameioFile[]> {
     if (!next) {
       break;
     }
-    const { folderId, depth } = next;
     foldersVisited++;
 
-    let pageUrl: string | null =
-      `${FRAMEIO_API_BASE}/accounts/${accountId}/folders/${folderId}/files?sort=created_at_desc`;
-
-    while (pageUrl) {
-      const response = await frameioFetch(pageUrl, accessToken);
-      const page = (await response.json()) as FrameioFilesResponse;
-
-      for (const entry of page.data) {
-        if (entry.type === "folder") {
-          if (depth < MAX_FOLDER_DEPTH) {
-            queue.push({ folderId: entry.id, depth: depth + 1 });
-          }
-          continue;
-        }
-        files.push(toFrameioFile(entry));
-      }
-
-      const oldestInPage = page.data.at(-1);
-      if (!oldestInPage || oldestInPage.created_at <= sinceISO) {
-        // Oldest entry on this page is already at/before the cursor —
-        // no need to fetch an even-older page for this folder.
-        break;
-      }
-
-      // `links.next` may be relative or absolute; resolve either way.
-      pageUrl = page.links?.next
-        ? new URL(page.links.next, FRAMEIO_API_BASE).toString()
-        : null;
+    const folderTruncated = await fetchFolderFiles(
+      next,
+      accountId,
+      accessToken,
+      sinceMs,
+      files,
+      queue,
+    );
+    if (folderTruncated) {
+      truncated = true;
     }
   }
 
-  // The final page fetched per folder may still mix entries older and
-  // newer than the cursor (the per-page "oldest" check only tells us when
-  // to stop paginating, not which individual entries to keep), so filter
-  // precisely here.
-  return files.filter((file) => file.createdAt > sinceISO);
+  // The pages fetched per folder may still mix entries older and newer than
+  // the cursor (the per-page "stop collecting" check is only an
+  // optimization, not a precise boundary), so filter precisely here —
+  // numerically, never as a raw string compare.
+  return {
+    files: files.filter((file) => Date.parse(file.createdAt) > sinceMs),
+    truncated,
+  };
 }

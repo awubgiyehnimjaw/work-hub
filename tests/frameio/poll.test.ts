@@ -24,8 +24,33 @@ vi.mock("@/lib/push/send", () => ({
   sendPush: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Lets individual tests make `parseClientTag` throw for one specific
+// filename, to simulate a file that fails partway through processing
+// (e.g. a transient DB error) without needing a real DB failure injection.
+vi.mock("@/lib/frameio/parse-client-tag", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/frameio/parse-client-tag")>(
+    "@/lib/frameio/parse-client-tag",
+  );
+  return {
+    ...actual,
+    parseClientTag: vi.fn((name: string) => {
+      if (name === "TRIGGER_FAILURE.mp4") {
+        throw new Error("simulated transient failure processing this file");
+      }
+      return actual.parseClientTag(name);
+    }),
+  };
+});
+
 const mockListNewFiles = listNewFiles as unknown as ReturnType<typeof vi.fn>;
 const mockSendPush = sendPush as unknown as ReturnType<typeof vi.fn>;
+
+const CURSOR_OVERLAP_BUFFER_MS = 60 * 1000;
+
+/** Wraps fixture files in the `{ files, truncated }` shape listNewFiles returns. */
+function filesResult(files: ReturnType<typeof file>[], truncated = false) {
+  return { files, truncated };
+}
 
 type FileOverrides = Partial<{
   id: string;
@@ -60,9 +85,9 @@ beforeEach(async () => {
 });
 
 test("creates a task for a recognized client tag", async () => {
-  mockListNewFiles.mockResolvedValue([
+  mockListNewFiles.mockResolvedValue(filesResult([
     file({ id: "f-recognized", name: "Cut (Lovelots).mp4" }),
-  ]);
+  ]));
 
   const result = await runFrameioPoll();
 
@@ -83,9 +108,9 @@ test("creates a task for a recognized client tag", async () => {
 });
 
 test("creates a flagged task for an unrecognized tag, never drops it", async () => {
-  mockListNewFiles.mockResolvedValue([
+  mockListNewFiles.mockResolvedValue(filesResult([
     file({ id: "f-unrecognized", name: "Cut (RandomCo).mp4" }),
-  ]);
+  ]));
 
   const result = await runFrameioPoll();
 
@@ -104,7 +129,7 @@ test("creates a flagged task for an unrecognized tag, never drops it", async () 
 });
 
 test("creates a flagged task when there is no bracket tag at all", async () => {
-  mockListNewFiles.mockResolvedValue([file({ id: "f-no-tag", name: "final.mp4" })]);
+  mockListNewFiles.mockResolvedValue(filesResult([file({ id: "f-no-tag", name: "final.mp4" })]));
 
   const result = await runFrameioPoll();
 
@@ -118,9 +143,9 @@ test("creates a flagged task when there is no bracket tag at all", async () => {
 });
 
 test("does not create a duplicate task for a file already recorded across two poll runs", async () => {
-  mockListNewFiles.mockResolvedValue([
+  mockListNewFiles.mockResolvedValue(filesResult([
     file({ id: "f-duplicate", name: "Cut (Lovelots).mp4" }),
-  ]);
+  ]));
 
   const first = await runFrameioPoll();
   expect(first.created).toBe(1);
@@ -141,10 +166,10 @@ test("does not create two tasks when the same file appears twice within a single
   // A naive implementation that only checked-then-inserted without an
   // onConflictDoNothing/catch would throw on the DB's unique constraint
   // for the second occurrence and abort the whole run.
-  mockListNewFiles.mockResolvedValue([
+  mockListNewFiles.mockResolvedValue(filesResult([
     file({ id: "f-batch-duplicate", name: "Cut (Lovelots).mp4" }),
     file({ id: "f-batch-duplicate", name: "Cut (Lovelots).mp4" }),
-  ]);
+  ]));
 
   const result = await runFrameioPoll();
 
@@ -164,9 +189,9 @@ test("does not throw and only records one task when two poll runs race on the sa
   // onConflictDoNothing backstop on tasks.frameioFileId directly, proving
   // a thrown unique-constraint violation doesn't bubble up and fail the
   // whole run.
-  mockListNewFiles.mockResolvedValue([
+  mockListNewFiles.mockResolvedValue(filesResult([
     file({ id: "f-race", name: "Cut (Lovelots).mp4" }),
-  ]);
+  ]));
 
   const [first, second] = await Promise.all([runFrameioPoll(), runFrameioPoll()]);
 
@@ -183,13 +208,13 @@ test("calls sendPush for every stored push subscription with the task's review U
     { endpoint: "https://push.example/a", p256dh: "key-a", auth: "auth-a" },
     { endpoint: "https://push.example/b", p256dh: "key-b", auth: "auth-b" },
   ]);
-  mockListNewFiles.mockResolvedValue([
+  mockListNewFiles.mockResolvedValue(filesResult([
     file({
       id: "f-push",
       name: "Cut (Lovelots).mp4",
       viewUrl: "https://frame.io/view/f-push",
     }),
-  ]);
+  ]));
 
   await runFrameioPoll();
 
@@ -205,9 +230,9 @@ test("calls sendPush for every stored push subscription with the task's review U
 });
 
 test("falls back to the Frame.io player URL when the API's view_url is null", async () => {
-  mockListNewFiles.mockResolvedValue([
+  mockListNewFiles.mockResolvedValue(filesResult([
     file({ id: "f-no-view-url", name: "Cut (Lovelots).mp4", viewUrl: null }),
-  ]);
+  ]));
 
   await runFrameioPoll();
 
@@ -219,7 +244,7 @@ test("falls back to the Frame.io player URL when the API's view_url is null", as
 });
 
 test("passes 24 hours ago as the cursor when syncState has never been polled", async () => {
-  mockListNewFiles.mockResolvedValue([]);
+  mockListNewFiles.mockResolvedValue(filesResult([]));
 
   const before = Date.now();
   await runFrameioPoll();
@@ -231,8 +256,8 @@ test("passes 24 hours ago as the cursor when syncState has never been polled", a
   expect(sinceMs).toBeLessThanOrEqual(before - 24 * 60 * 60 * 1000 + 5000);
 });
 
-test("updates syncState.frameioLastPolledAt on success, and uses it as the next cursor", async () => {
-  mockListNewFiles.mockResolvedValue([]);
+test("updates syncState.frameioLastPolledAt on success, minus the overlap buffer, and uses it as the next cursor", async () => {
+  mockListNewFiles.mockResolvedValue(filesResult([]));
 
   const before = Date.now();
   await runFrameioPoll();
@@ -241,12 +266,86 @@ test("updates syncState.frameioLastPolledAt on success, and uses it as the next 
   const [state] = await db.select().from(syncState);
   expect(state.frameioLastPolledAt).not.toBeNull();
   const polledMs = state.frameioLastPolledAt!.getTime();
-  expect(polledMs).toBeGreaterThanOrEqual(before);
-  expect(polledMs).toBeLessThanOrEqual(after);
+  // The stored cursor is the run's time minus the overlap buffer (Critical
+  // 2's fix), not the raw run time — so compare against the buffered
+  // window, not [before, after] directly.
+  expect(polledMs).toBeGreaterThanOrEqual(before - CURSOR_OVERLAP_BUFFER_MS);
+  expect(polledMs).toBeLessThanOrEqual(after - CURSOR_OVERLAP_BUFFER_MS);
 
   // Second run should pass that same timestamp back in as the new cursor.
-  mockListNewFiles.mockResolvedValue([]);
+  mockListNewFiles.mockResolvedValue(filesResult([]));
   await runFrameioPoll();
   const [sinceISO] = mockListNewFiles.mock.calls[1] as [string];
   expect(new Date(sinceISO).getTime()).toBe(polledMs);
+});
+
+test("stamps the poll cursor using the time the run started (minus the overlap buffer), not when it finished", async () => {
+  // Critical 2 regression test: the pre-fix implementation called
+  // `markPolled(new Date())` AFTER processing finished, so a file created
+  // on Frame.io mid-run (while this run was still fetching/inserting) fell
+  // into neither this run's results nor the next run's `createdAt >
+  // sinceISO` window. Simulating a slow `listNewFiles` call makes "started"
+  // vs "finished" measurably different, so we can assert the stored cursor
+  // tracks the START of the run.
+  const startedAt = Date.now();
+  mockListNewFiles.mockImplementation(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return filesResult([]);
+  });
+
+  await runFrameioPoll();
+  const finishedAt = Date.now();
+  expect(finishedAt - startedAt).toBeGreaterThanOrEqual(300);
+
+  const [state] = await db.select().from(syncState);
+  const polledMs = state.frameioLastPolledAt!.getTime();
+
+  // Close to (startedAt - buffer)...
+  expect(polledMs).toBeGreaterThanOrEqual(startedAt - CURSOR_OVERLAP_BUFFER_MS - 500);
+  expect(polledMs).toBeLessThanOrEqual(startedAt - CURSOR_OVERLAP_BUFFER_MS + 500);
+  // ...and meaningfully earlier than (finishedAt - buffer) would be, which
+  // is what the pre-fix "stamp on completion" behavior would have produced.
+  expect(polledMs).toBeLessThan(finishedAt - CURSOR_OVERLAP_BUFFER_MS);
+});
+
+test("does not advance the cursor when a file fails to process, so it is retried next run instead of being permanently skipped", async () => {
+  // Important 3 regression test: parseClientTag is mocked (see top of
+  // file) to throw for this specific filename, simulating a transient
+  // failure partway through processing one file in the batch.
+  mockListNewFiles.mockResolvedValue(
+    filesResult([
+      file({ id: "f-good", name: "Cut (Lovelots).mp4", createdAt: "2026-01-01T00:00:00.000Z" }),
+      file({ id: "f-bad", name: "TRIGGER_FAILURE.mp4", createdAt: "2026-01-02T00:00:00.000Z" }),
+    ]),
+  );
+
+  const result = await runFrameioPoll();
+
+  // The good file in the same batch still gets processed...
+  expect(result.created).toBe(1);
+  const goodTaskRows = await db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.frameioFileId, "f-good"));
+  expect(goodTaskRows).toHaveLength(1);
+
+  // ...but the cursor must not advance this run, since f-bad was never
+  // successfully turned into a task and would otherwise be permanently
+  // skipped (the next run's `createdAt > sinceISO` filter would exclude it
+  // forever).
+  const [state] = await db.select().from(syncState);
+  expect(state).toBeUndefined();
+});
+
+test("does not advance the cursor when Frame.io folder traversal was truncated this run", async () => {
+  // Important 5 regression test: if listNewFiles hit a safety cap (depth,
+  // MAX_FOLDERS_VISITED, or MAX_PAGES_PER_FOLDER) it reports
+  // `truncated: true` — runFrameioPoll must not advance the cursor past
+  // folders it never actually looked at.
+  mockListNewFiles.mockResolvedValue(filesResult([], true));
+
+  await runFrameioPoll();
+
+  const [state] = await db.select().from(syncState);
+  expect(state).toBeUndefined();
 });

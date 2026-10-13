@@ -9,6 +9,13 @@ type ClientRow = typeof clients.$inferSelect;
 
 const DEFAULT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
+// Subtracted from the run's start time before it's stored as the next
+// cursor, to absorb clock skew between Frame.io's server and ours. This is
+// free: re-seeing a file inside the overlap just costs one extra SELECT in
+// `alreadyRecorded` that finds it already exists (dedup is keyed on
+// `frameioFileId`, not on time).
+const CURSOR_OVERLAP_BUFFER_MS = 60 * 1000;
+
 // Tag used for the single shared "catch-all" client row that files with no
 // bracketed tag at all get attached to, so repeated untagged uploads don't
 // each spawn their own client row. A real client tag can never collide
@@ -154,11 +161,20 @@ export async function runFrameioPoll(): Promise<{
   created: number;
   unrecognized: number;
 }> {
+  // Captured BEFORE listNewFiles runs, not after this function finishes.
+  // Stamping the cursor with a finish time would create a permanent blind
+  // spot: a file created on Frame.io while this run is still fetching
+  // folders / inserting rows / sending pushes would be excluded from both
+  // this run's already-fetched results AND the next run's `createdAt >
+  // sinceISO` filter (since the cursor would have already moved past it).
+  const pollStartedAt = new Date();
+
   const sinceISO = await getSinceISO();
-  const files = await listNewFiles(sinceISO);
+  const { files, truncated } = await listNewFiles(sinceISO);
 
   let created = 0;
   let unrecognized = 0;
+  let anyFailures = false;
 
   for (const file of files) {
     try {
@@ -178,13 +194,29 @@ export async function runFrameioPoll(): Promise<{
       }
     } catch (error) {
       // Never let one bad file take down the whole poll run — log and
-      // keep going so the rest of this batch (and the cursor update
-      // below) still happen.
+      // keep going so the rest of this batch still gets processed. But
+      // don't advance the cursor past it either (see below): a file that
+      // failed here (e.g. a transient DB error) must be retried next run,
+      // not silently skipped forever.
+      anyFailures = true;
       console.error(`runFrameioPoll: failed to process file ${file.id}`, error);
     }
   }
 
-  await markPolled(new Date());
+  if (anyFailures) {
+    console.warn(
+      "runFrameioPoll: at least one file failed to process this run; not advancing " +
+        "the poll cursor so the whole batch is retried next run (dedup makes already-" +
+        "succeeded files in it free to re-see).",
+    );
+  } else if (truncated) {
+    console.warn(
+      "runFrameioPoll: Frame.io folder traversal was truncated this run (hit a safety " +
+        "cap); not advancing the poll cursor so the untraversed folders are retried next run.",
+    );
+  } else {
+    await markPolled(new Date(pollStartedAt.getTime() - CURSOR_OVERLAP_BUFFER_MS));
+  }
 
   return { created, unrecognized };
 }
