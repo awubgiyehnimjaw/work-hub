@@ -1,0 +1,240 @@
+import { eq } from "drizzle-orm";
+import { beforeEach, expect, test } from "vitest";
+import { PATCH } from "@/app/api/tasks/[id]/route";
+import { GET, POST } from "@/app/api/tasks/route";
+import { db } from "@/lib/db/client";
+import { tasks } from "@/lib/db/schema";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NONEXISTENT_ID = "00000000-0000-0000-0000-000000000000";
+
+beforeEach(async () => {
+  await db.delete(tasks);
+});
+
+function postRequest(body: unknown) {
+  return new Request("http://localhost/api/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function patchRequest(body: unknown) {
+  return new Request("http://localhost/api/tasks/placeholder", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function patchContext(id: string) {
+  return { params: Promise.resolve({ id }) };
+}
+
+test("GET /api/tasks excludes completed tasks and tasks still snoozed in the future", async () => {
+  const now = Date.now();
+  await db.insert(tasks).values([
+    {
+      type: "todo",
+      title: "active, unsnoozed",
+      status: "active",
+      createdAt: new Date(now - 3 * DAY_MS),
+    },
+    {
+      type: "todo",
+      title: "completed",
+      status: "completed",
+      createdAt: new Date(now - 3 * DAY_MS),
+      completedAt: new Date(now),
+    },
+    {
+      type: "todo",
+      title: "snoozed into the future",
+      status: "active",
+      createdAt: new Date(now - 3 * DAY_MS),
+      snoozedUntil: new Date(now + DAY_MS),
+    },
+  ]);
+
+  const res = await GET();
+  expect(res.status).toBe(200);
+  const body = await res.json();
+
+  expect(body).toHaveLength(1);
+  expect(body[0].title).toBe("active, unsnoozed");
+});
+
+test("GET /api/tasks includes a task whose snoozedUntil has already passed", async () => {
+  const now = Date.now();
+  await db.insert(tasks).values({
+    type: "todo",
+    title: "snooze elapsed",
+    status: "active",
+    createdAt: new Date(now - 3 * DAY_MS),
+    snoozedUntil: new Date(now - 1000),
+  });
+
+  const res = await GET();
+  const body = await res.json();
+
+  expect(res.status).toBe(200);
+  expect(body).toHaveLength(1);
+  expect(body[0].title).toBe("snooze elapsed");
+});
+
+test("GET /api/tasks sorts oldest-first and annotates isStale per task", async () => {
+  const now = Date.now();
+  await db.insert(tasks).values([
+    {
+      type: "todo",
+      title: "newer, not stale",
+      status: "active",
+      createdAt: new Date(now - 1 * DAY_MS),
+    },
+    {
+      type: "todo",
+      title: "older, stale",
+      status: "active",
+      createdAt: new Date(now - 5 * DAY_MS),
+    },
+  ]);
+
+  const res = await GET();
+  const body = await res.json();
+
+  expect(body.map((t: { title: string }) => t.title)).toEqual([
+    "older, stale",
+    "newer, not stale",
+  ]);
+  expect(body[0].isStale).toBe(true);
+  expect(body[1].isStale).toBe(false);
+});
+
+test("POST /api/tasks creates an active todo task and returns 201", async () => {
+  const res = await POST(postRequest({ title: "Pick up hard drive" }));
+  expect(res.status).toBe(201);
+  const body = await res.json();
+
+  expect(body.type).toBe("todo");
+  expect(body.title).toBe("Pick up hard drive");
+  expect(body.status).toBe("active");
+
+  const rows = await db.select().from(tasks);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].type).toBe("todo");
+  expect(rows[0].status).toBe("active");
+});
+
+test("POST /api/tasks returns 400 and creates nothing when title is missing", async () => {
+  const res = await POST(postRequest({}));
+  expect(res.status).toBe(400);
+
+  const rows = await db.select().from(tasks);
+  expect(rows).toHaveLength(0);
+});
+
+test("PATCH /api/tasks/:id with action 'complete' sets status and completedAt", async () => {
+  const [task] = await db
+    .insert(tasks)
+    .values({ type: "todo", title: "finish edit", status: "active" })
+    .returning();
+
+  const res = await PATCH(patchRequest({ action: "complete" }), patchContext(task.id));
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.status).toBe("completed");
+  expect(body.completedAt).not.toBeNull();
+
+  const [updated] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+  expect(updated.status).toBe("completed");
+  expect(updated.completedAt).not.toBeNull();
+});
+
+test("PATCH /api/tasks/:id with action 'snooze' sets snoozedUntil to the given ISO timestamp", async () => {
+  const [task] = await db
+    .insert(tasks)
+    .values({ type: "todo", title: "later", status: "active" })
+    .returning();
+
+  const until = new Date(Date.now() + DAY_MS).toISOString();
+  const res = await PATCH(patchRequest({ action: "snooze", until }), patchContext(task.id));
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(new Date(body.snoozedUntil).toISOString()).toBe(until);
+
+  const [updated] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+  expect(updated.snoozedUntil?.toISOString()).toBe(until);
+});
+
+test("snoozing a task with a PAST timestamp makes it reappear in the very next GET /api/tasks call", async () => {
+  const [task] = await db
+    .insert(tasks)
+    .values({
+      type: "todo",
+      title: "snoozed then unsnoozed",
+      status: "active",
+      createdAt: new Date(Date.now() - 3 * DAY_MS),
+    })
+    .returning();
+
+  // Snooze into the future first — confirm it's excluded from the list.
+  const future = new Date(Date.now() + DAY_MS).toISOString();
+  const futureRes = await PATCH(
+    patchRequest({ action: "snooze", until: future }),
+    patchContext(task.id),
+  );
+  expect(futureRes.status).toBe(200);
+
+  const excludedRes = await GET();
+  const excludedBody = await excludedRes.json();
+  expect(excludedBody).toHaveLength(0);
+
+  // Now re-snooze with a PAST timestamp — the very next list call must
+  // include it again.
+  const past = new Date(Date.now() - 1000).toISOString();
+  const pastRes = await PATCH(
+    patchRequest({ action: "snooze", until: past }),
+    patchContext(task.id),
+  );
+  expect(pastRes.status).toBe(200);
+
+  const res = await GET();
+  const body = await res.json();
+  expect(body).toHaveLength(1);
+  expect(body[0].id).toBe(task.id);
+});
+
+test("PATCH /api/tasks/:id returns 404 for a nonexistent id and changes nothing", async () => {
+  const res = await PATCH(
+    patchRequest({ action: "complete" }),
+    patchContext(NONEXISTENT_ID),
+  );
+  expect(res.status).toBe(404);
+
+  const rows = await db.select().from(tasks);
+  expect(rows).toHaveLength(0);
+});
+
+test("PATCH /api/tasks/:id returns 400 for an unrecognized action", async () => {
+  const [task] = await db
+    .insert(tasks)
+    .values({ type: "todo", title: "x", status: "active" })
+    .returning();
+
+  const res = await PATCH(patchRequest({ action: "bogus" }), patchContext(task.id));
+  expect(res.status).toBe(400);
+
+  const [unchanged] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+  expect(unchanged.status).toBe("active");
+});
+
+test("PATCH /api/tasks/:id returns 400 for a snooze action with a missing until", async () => {
+  const [task] = await db
+    .insert(tasks)
+    .values({ type: "todo", title: "x", status: "active" })
+    .returning();
+
+  const res = await PATCH(patchRequest({ action: "snooze" }), patchContext(task.id));
+  expect(res.status).toBe(400);
+});
