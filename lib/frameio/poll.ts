@@ -1,0 +1,190 @@
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { clients, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
+import { buildFrameioUrl, listNewFiles, type FrameioFile } from "@/lib/frameio/client";
+import { parseClientTag } from "@/lib/frameio/parse-client-tag";
+import { sendPush } from "@/lib/push/send";
+
+type ClientRow = typeof clients.$inferSelect;
+
+const DEFAULT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+// Tag used for the single shared "catch-all" client row that files with no
+// bracketed tag at all get attached to, so repeated untagged uploads don't
+// each spawn their own client row. A real client tag can never collide
+// with this (`parseClientTag` only ever returns bracket contents or null).
+const NO_TAG_PLACEHOLDER = "Unrecognized";
+
+async function getSinceISO(): Promise<string> {
+  const [row] = await db.select().from(syncState);
+  if (row?.frameioLastPolledAt) {
+    return row.frameioLastPolledAt.toISOString();
+  }
+  return new Date(Date.now() - DEFAULT_LOOKBACK_MS).toISOString();
+}
+
+async function markPolled(at: Date): Promise<void> {
+  const [existing] = await db.select().from(syncState);
+  if (existing) {
+    await db
+      .update(syncState)
+      .set({ frameioLastPolledAt: at })
+      .where(eq(syncState.id, existing.id));
+  } else {
+    await db.insert(syncState).values({ frameioLastPolledAt: at });
+  }
+}
+
+/**
+ * Looks up the `clients` row for a parsed tag, or creates one flagged
+ * `recognized: false` if nothing matches — including when `tag` is `null`
+ * (no bracket group in the filename at all). Never hardcodes the known
+ * tag list; "known" means "already a row in `clients`" (seeded by Task 2's
+ * `seedClients()`), queried fresh each time so a newly-recognized client
+ * added to that table later is picked up automatically.
+ */
+async function getOrCreateClient(tag: string | null): Promise<ClientRow> {
+  const effectiveTag = tag && tag.length > 0 ? tag : NO_TAG_PLACEHOLDER;
+
+  const [existing] = await db
+    .select()
+    .from(clients)
+    .where(eq(clients.tag, effectiveTag));
+  if (existing) {
+    return existing;
+  }
+
+  const [created] = await db
+    .insert(clients)
+    .values({
+      tag: effectiveTag,
+      displayName: effectiveTag,
+      recognized: false,
+      lastActivityAt: null,
+    })
+    .onConflictDoNothing({ target: clients.tag })
+    .returning();
+  if (created) {
+    return created;
+  }
+
+  // Lost a race to a concurrent poll run creating the same new tag —
+  // re-read what's there now rather than erroring.
+  const [raceWinner] = await db
+    .select()
+    .from(clients)
+    .where(eq(clients.tag, effectiveTag));
+  if (!raceWinner) {
+    throw new Error(`Failed to find or create client for tag "${effectiveTag}"`);
+  }
+  return raceWinner;
+}
+
+async function alreadyRecorded(frameioFileId: string): Promise<boolean> {
+  const [existing] = await db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.frameioFileId, frameioFileId));
+  return existing !== undefined;
+}
+
+async function createReviewTask(
+  file: FrameioFile,
+  client: ClientRow,
+): Promise<boolean> {
+  const frameioUrl = file.viewUrl ?? buildFrameioUrl(file.id);
+
+  // App-level dedup (`alreadyRecorded`, checked by the caller) is the
+  // primary guard, but `onConflictDoNothing` on the DB's unique
+  // `frameioFileId` constraint backs it up — e.g. the same file appearing
+  // twice within one `listNewFiles` batch (pagination overlap) would
+  // otherwise race both inserts past the app-level check. Without this,
+  // the second insert's unique-constraint violation would throw and
+  // abort the whole poll run instead of just skipping that one file.
+  const [task] = await db
+    .insert(tasks)
+    .values({
+      type: "review",
+      title: `Review — ${client.displayName}`,
+      clientId: client.id,
+      frameioFileId: file.id,
+      frameioUrl,
+      status: "active",
+    })
+    .onConflictDoNothing({ target: tasks.frameioFileId })
+    .returning();
+
+  if (!task) {
+    // Someone else recorded this file first (race); nothing more to do.
+    return false;
+  }
+
+  await db
+    .update(clients)
+    .set({ lastActivityAt: new Date() })
+    .where(eq(clients.id, client.id));
+
+  const subscriptions = await db.select().from(pushSubscriptions);
+  for (const subscription of subscriptions) {
+    await sendPush(
+      {
+        endpoint: subscription.endpoint,
+        p256dh: subscription.p256dh,
+        auth: subscription.auth,
+      },
+      {
+        title: `New review: ${client.displayName}`,
+        body: file.name,
+        url: task.frameioUrl ?? frameioUrl,
+      },
+    );
+  }
+
+  return true;
+}
+
+/**
+ * Polls Frame.io for files uploaded since the last poll and turns each one
+ * into a review task. Every file produces a task — an unrecognized or
+ * missing client tag is flagged (`clients.recognized = false`), never
+ * silently dropped. Already-recorded files (by `frameioFileId`) are
+ * skipped, not re-created.
+ */
+export async function runFrameioPoll(): Promise<{
+  created: number;
+  unrecognized: number;
+}> {
+  const sinceISO = await getSinceISO();
+  const files = await listNewFiles(sinceISO);
+
+  let created = 0;
+  let unrecognized = 0;
+
+  for (const file of files) {
+    try {
+      if (await alreadyRecorded(file.id)) {
+        continue;
+      }
+
+      const tag = parseClientTag(file.name);
+      const client = await getOrCreateClient(tag);
+
+      const wasCreated = await createReviewTask(file, client);
+      if (wasCreated) {
+        created++;
+        if (!client.recognized) {
+          unrecognized++;
+        }
+      }
+    } catch (error) {
+      // Never let one bad file take down the whole poll run — log and
+      // keep going so the rest of this batch (and the cursor update
+      // below) still happen.
+      console.error(`runFrameioPoll: failed to process file ${file.id}`, error);
+    }
+  }
+
+  await markPolled(new Date());
+
+  return { created, unrecognized };
+}
