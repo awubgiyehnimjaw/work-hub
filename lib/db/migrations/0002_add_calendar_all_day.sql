@@ -1,0 +1,1 @@
+ALTER TABLE "calendar_events_cache" ADD COLUMN "all_day" boolean DEFAULT false NOT NULL;

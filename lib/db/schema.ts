@@ -38,6 +38,13 @@ export const tasks = pgTable("tasks", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
   snoozedUntil: timestamp("snoozed_until"),
+  // Set when a "snooze just expired" reappearance push (Important 4) has
+  // been sent for the CURRENT `snoozedUntil` value — nullable so a task
+  // that's never been snoozed, or never had its snooze expiry notified,
+  // is trivially "needs notifying". Compared against `snoozedUntil` itself
+  // (not just null-checked) so re-snoozing the same task again correctly
+  // requires a fresh notification the next time that new snooze expires.
+  snoozeNotifiedAt: timestamp("snooze_notified_at"),
 });
 
 export const suggestions = pgTable("suggestions", {
@@ -63,6 +70,11 @@ export const calendarEventsCache = pgTable("calendar_events_cache", {
   startAt: timestamp("start_at").notNull(),
   endAt: timestamp("end_at").notNull(),
   location: text("location"),
+  // Important 11: lets CalendarAgenda show "All day" instead of a nonsense
+  // time range (e.g. "1:00 AM–1:00 AM") for a date-only Google Calendar
+  // event. Defaults to false so this column can be added to a table that
+  // may already have rows.
+  allDay: boolean("all_day").notNull().default(false),
 });
 
 export const oauthTokens = pgTable("oauth_tokens", {
