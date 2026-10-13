@@ -1,0 +1,50 @@
+name: Scheduled cron calls
+
+# GitHub Actions is Work Hub's external scheduler (not Vercel's own cron,
+# to stay on free tiers — see docs/superpowers/plans/2026-10-13-work-hub-mvp.md
+# Global Constraints). This workflow calls the two protected `/api/cron/*`
+# endpoints on the schedule the plan pins: poll-frameio every 3 minutes
+# (within the plan's required 2-5 minute range), fetch-calendar every 15
+# minutes. Both endpoints are gated by `checkCronSecret`
+# (lib/auth/cron-secret.ts), which checks an `Authorization: Bearer <token>`
+# header against the deployed `CRON_SECRET` env var — so both jobs below
+# send that same secret, read from this repo's `CRON_SECRET` Actions
+# secret, which must be set to the exact same value as the Vercel
+# `CRON_SECRET` env var (see docs/superpowers/deploy-notes.md).
+#
+# GitHub's two `schedule` triggers below fire on independent clocks but
+# always deliver the same workflow run with `github.event.schedule` set to
+# whichever cron expression fired it. Each job's `if:` only runs the job
+# that matches that expression, so a given run calls exactly one endpoint
+# — except `workflow_dispatch`, which runs both jobs, for manually
+# verifying the whole workflow without waiting on the clock.
+on:
+  schedule:
+    - cron: "*/3 * * * *"
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  poll-frameio:
+    name: Poll Frame.io
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/3 * * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/poll-frameio
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request GET \
+            --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_BASE_URL }}/api/cron/poll-frameio"
+
+  fetch-calendar:
+    name: Fetch Google Calendar
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/fetch-calendar
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request GET \
+            --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_BASE_URL }}/api/cron/fetch-calendar"
