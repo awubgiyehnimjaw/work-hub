@@ -1,5 +1,10 @@
 import { expect, test } from "vitest";
-import { urlBase64ToUint8Array } from "@/lib/push/client";
+import {
+  decidePushReconcileAction,
+  toSubscriptionPayload,
+  urlBase64ToUint8Array,
+  type SubscriptionLike,
+} from "@/lib/push/client";
 
 // Fixture: 65 random bytes (the length of a real uncompressed EC public
 // key, as VAPID keys are) encoded as base64url (Node's `Buffer.toString
@@ -41,4 +46,76 @@ test("urlBase64ToUint8Array round-trips every possible byte value (0-255)", () =
   const result = urlBase64ToUint8Array(base64url);
 
   expect(Array.from(result)).toEqual(bytes);
+});
+
+function subscription(
+  json: { endpoint?: string; keys?: { p256dh?: string; auth?: string } } = {
+    endpoint: "https://push.example/sub-1",
+    keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+  },
+): SubscriptionLike {
+  return { toJSON: () => json };
+}
+
+test("toSubscriptionPayload normalizes a valid subscription", () => {
+  const result = toSubscriptionPayload(subscription());
+
+  expect(result).toEqual({
+    endpoint: "https://push.example/sub-1",
+    keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+  });
+});
+
+test("toSubscriptionPayload returns null when endpoint is missing", () => {
+  const result = toSubscriptionPayload(
+    subscription({ keys: { p256dh: "a", auth: "b" } }),
+  );
+  expect(result).toBeNull();
+});
+
+test("toSubscriptionPayload returns null when keys are missing", () => {
+  const result = toSubscriptionPayload(subscription({ endpoint: "https://push.example/sub-1" }));
+  expect(result).toBeNull();
+});
+
+test("toSubscriptionPayload returns null when p256dh is missing", () => {
+  const result = toSubscriptionPayload(
+    subscription({ endpoint: "https://push.example/sub-1", keys: { auth: "b" } }),
+  );
+  expect(result).toBeNull();
+});
+
+// Critical 2 regression coverage: decidePushReconcileAction is the pure
+// decision logic behind EnableNotificationsButton's mount-time
+// reconciliation, so a dead/missing subscription gets automatically
+// re-created instead of leaving the UI claiming "enabled" forever.
+
+test("decidePushReconcileAction does nothing when permission isn't granted", () => {
+  expect(decidePushReconcileAction("default", null)).toEqual({ kind: "none" });
+  expect(decidePushReconcileAction("denied", subscription())).toEqual({ kind: "none" });
+});
+
+test("decidePushReconcileAction resubscribes when permission is granted but no subscription exists", () => {
+  // This is the exact Critical 2 scenario: the OS/browser revoked the
+  // subscription (e.g. after the server deleted it on a 404/410, or a PWA
+  // reinstall) while Notification.permission is still "granted".
+  expect(decidePushReconcileAction("granted", null)).toEqual({ kind: "resubscribe" });
+});
+
+test("decidePushReconcileAction re-posts an existing valid subscription instead of resubscribing", () => {
+  const sub = subscription();
+  const result = decidePushReconcileAction("granted", sub);
+
+  expect(result).toEqual({
+    kind: "post-existing",
+    payload: {
+      endpoint: "https://push.example/sub-1",
+      keys: { p256dh: "p256dh-key", auth: "auth-secret" },
+    },
+  });
+});
+
+test("decidePushReconcileAction resubscribes when the existing subscription is malformed", () => {
+  const sub = subscription({ endpoint: "https://push.example/sub-1" }); // missing keys
+  expect(decidePushReconcileAction("granted", sub)).toEqual({ kind: "resubscribe" });
 });
