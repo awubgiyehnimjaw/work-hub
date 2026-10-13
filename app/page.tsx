@@ -86,7 +86,12 @@ export default function HomePage() {
 
   return (
     <main style={{ maxWidth: 480, margin: "0 auto", padding: 16, fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 800, margin: "8px 0 24px" }}>Work Hub</h1>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "8px 0 24px" }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>Work Hub</h1>
+        <a href="/history" style={{ fontSize: 14, color: "#6b7280", textDecoration: "none" }}>
+          History →
+        </a>
+      </div>
 
       {state === "loading" ? <p style={{ color: "#6b7280" }}>Loading…</p> : null}
       {state === "error" ? (
