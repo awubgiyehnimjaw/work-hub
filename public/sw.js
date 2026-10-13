@@ -2,11 +2,43 @@
  * Work Hub service worker.
  *
  * Two jobs only: show a notification when a push arrives, and when the user
- * taps it, focus an already-open Work Hub tab (navigating it to the
- * notification's URL) or open a new one. `lib/push/send.ts` sends the push
- * message body as `JSON.stringify({ title, body, url })` with no extra
- * wrapping, so `event.data.json()` below yields that shape directly.
+ * taps it, either focus an already-open tab that's already showing the
+ * exact target URL, or open a new tab/window at that URL. `lib/push/send.ts`
+ * sends the push message body as `JSON.stringify({ title, body, url })`
+ * with no extra wrapping, so `event.data.json()` below yields that shape
+ * directly.
+ *
+ * The notification's `url` (see `lib/frameio/poll.ts` /
+ * `lib/push/send.ts`) is always an EXTERNAL Frame.io link
+ * (`https://app.frame.io/...`), never a same-origin Work Hub route. That
+ * matters for `resolveNotificationClickAction` below: a same-origin check
+ * is not a safe signal for "this tab can be steered to the target", because
+ * steering it would require a cross-origin `client.navigate()`, which
+ * WebKit (Safari/iOS — this project's primary target) can silently refuse.
+ * Only an EXACT URL match is reused/focused; anything else opens a new
+ * window, which works regardless of browser support for cross-origin
+ * `navigate()`.
  */
+
+/**
+ * Pure decision function for `notificationclick`: given the URLs of
+ * currently-open window clients and the resolved target URL, decides
+ * whether to focus an existing client (because it's already showing the
+ * exact target URL) or open a new window. Kept separate from the
+ * `clients`/`event` service-worker APIs so it can be unit tested in a
+ * plain JS/Node environment without a browser or service-worker shim.
+ *
+ * @param {string[]} clientUrls
+ * @param {string} targetUrl
+ * @returns {{ action: "focus", index: number } | { action: "openWindow" }}
+ */
+function resolveNotificationClickAction(clientUrls, targetUrl) {
+  const index = clientUrls.findIndex((url) => url === targetUrl);
+  if (index !== -1) {
+    return { action: "focus", index };
+  }
+  return { action: "openWindow" };
+}
 
 self.addEventListener("install", () => {
   // Activate this version as soon as it finishes installing, rather than
@@ -61,22 +93,20 @@ self.addEventListener("notificationclick", (event) => {
         includeUncontrolled: true,
       });
 
-      // Prefer focusing (and navigating) an already-open Work Hub tab over
-      // opening a new one, so tapping a notification doesn't pile up tabs.
+      // Reuse an already-open tab only if it's already showing the EXACT
+      // target URL - never just same-origin. The target is almost always a
+      // cross-origin Frame.io link, and steering an existing same-origin
+      // tab there would require a cross-origin client.navigate(), which
+      // WebKit can silently refuse - leaving the user stranded on the
+      // refocused tab instead of the notification's actual destination.
+      // openWindow() always reaches the right URL, regardless of browser
+      // support for cross-origin navigate().
       const resolvedTarget = new URL(targetUrl, self.location.origin).href;
-      for (const client of windowClients) {
-        if (client.url.startsWith(self.location.origin)) {
-          if (client.url !== resolvedTarget && "navigate" in client) {
-            try {
-              await client.navigate(resolvedTarget);
-            } catch {
-              // Some browsers restrict cross-document navigate() in edge
-              // cases - focusing the existing tab is still a reasonable
-              // outcome even if it can't be steered to the exact URL.
-            }
-          }
-          return client.focus();
-        }
+      const clientUrls = windowClients.map((client) => client.url);
+      const decision = resolveNotificationClickAction(clientUrls, resolvedTarget);
+
+      if (decision.action === "focus") {
+        return windowClients[decision.index].focus();
       }
 
       return self.clients.openWindow(resolvedTarget);
