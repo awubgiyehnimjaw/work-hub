@@ -133,10 +133,11 @@ git commit -m "chore: scaffold Next.js project with health check"
 - Produces tables (Drizzle):
   - `clients`: `id (uuid pk)`, `tag (text, unique)`, `displayName (text)`, `recognized (boolean)`, `lastActivityAt (timestamp, nullable)`
   - `tasks`: `id (uuid pk)`, `type ('review'|'todo')`, `title (text)`, `clientId (uuid, nullable fk -> clients.id)`, `frameioFileId (text, nullable, unique)`, `frameioUrl (text, nullable)`, `status ('active'|'completed')`, `createdAt (timestamp)`, `completedAt (timestamp, nullable)`, `snoozedUntil (timestamp, nullable)`
-  - `suggestions`: `id (uuid pk)`, `category ('ulti'|'arc'|'general')`, `text (text)`, `active (boolean)`
+  - `suggestions`: `id (uuid pk)`, `category ('ulti'|'arc'|'general')`, `text (text, unique)`, `active (boolean)`, `lastPickedAt (timestamp, nullable)`
   - `pushSubscriptions`: `id (uuid pk)`, `endpoint (text, unique)`, `p256dh (text)`, `auth (text)`, `createdAt (timestamp)`
   - `calendarEventsCache`: `id (uuid pk)`, `googleEventId (text, unique)`, `title (text)`, `startAt (timestamp)`, `endAt (timestamp)`, `location (text, nullable)`
-  - `oauthTokens`: `id (uuid pk)`, `provider ('frameio'|'google')`, `accessToken (text)`, `refreshToken (text)`, `expiresAt (timestamp)`
+  - `oauthTokens`: `id (uuid pk)`, `provider ('frameio'|'google', unique)`, `accessToken (text)`, `refreshToken (text)`, `expiresAt (timestamp)`
+  - `syncState`: `id (uuid pk, single row)`, `frameioLastPolledAt (timestamp, nullable)`
 - Produces: `seedClients(): Promise<void>` and `seedSuggestions(): Promise<void>` in `lib/db/seed.ts`, both idempotent (upsert on unique key).
 - Consumes: none (foundational).
 
@@ -313,9 +314,9 @@ git commit -m "feat: add Frame.io OAuth connect flow"
 - Produces: `listNewFiles(sinceISO: string): Promise<FrameioFile[]>` in `lib/frameio/client.ts`, where `FrameioFile = { id: string; name: string; createdAt: string }`, authenticated using the stored `oauthTokens` row for `frameio`.
 - Produces: `checkCronSecret(req: Request): boolean` in `lib/auth/cron-secret.ts` — compares the `Authorization: Bearer <token>` header against `process.env.CRON_SECRET`.
 - Produces: `buildFrameioUrl(fileId: string): string` in `lib/frameio/client.ts`, returning `` `https://app.frame.io/player/${fileId}` ``. Note for the implementer: confirm this against a real response from `listNewFiles` against Callum's account before shipping — if the Frame.io API returns its own view/share URL field on the file object, prefer that field over this constructed one.
-- Produces: `runFrameioPoll(): Promise<{ created: number; unrecognized: number }>` in `lib/frameio/poll.ts`. For each new file since the last recorded poll time: parse the tag with `parseClientTag`; look up or create (if unrecognized) the matching `clients` row (`recognized = tag is in the known list`); skip if a `tasks` row with that `frameioFileId` already exists (dedup); otherwise insert a `tasks` row (`type: 'review'`, title `Review — ${client.displayName}`, `frameioFileId: file.id`, `frameioUrl: buildFrameioUrl(file.id)`), update `clients.lastActivityAt`, and call `sendPush` (Task 8) for every stored subscription with `payload.url = task.frameioUrl`.
+- Produces: `runFrameioPoll(): Promise<{ created: number; unrecognized: number }>` in `lib/frameio/poll.ts`. Reads the single `syncState` row's `frameioLastPolledAt` (if null, treat as 24 hours before now) and calls `listNewFiles(sinceISO)` with it. For each returned file: parse the tag with `parseClientTag`; look up or create (if unrecognized) the matching `clients` row (`recognized = tag is in the known list`); skip if a `tasks` row with that `frameioFileId` already exists (dedup); otherwise insert a `tasks` row (`type: 'review'`, title `Review — ${client.displayName}`, `frameioFileId: file.id`, `frameioUrl: buildFrameioUrl(file.id)`), update `clients.lastActivityAt`, and call `sendPush` (Task 8) for every stored subscription with `payload.url = task.frameioUrl`. On success, sets `syncState.frameioLastPolledAt` to the current time (upsert the single row).
 - Produces: `GET /api/cron/poll-frameio` — returns 401 immediately (no DB or Frame.io calls) if `checkCronSecret` fails; otherwise calls `runFrameioPoll()` and returns its result as JSON, 200.
-- Consumes: `parseClientTag` (Task 4), `clients`/`tasks` tables (Task 2), `sendPush` (Task 8 — see note below).
+- Consumes: `parseClientTag` (Task 4), `clients`/`tasks`/`syncState` tables (Task 2), `sendPush` (Task 8 — see note below).
 
 > Note: `sendPush` is defined in Task 8. If executing tasks in order, stub `sendPush` as a no-op here with the exact signature from Task 8's Interfaces block and wire the real implementation when Task 8 lands; the test for this task mocks the import regardless.
 
@@ -539,7 +540,7 @@ git commit -m "feat: add tasks API with quick-add, complete, snooze, and aging"
 - Test: `tests/suggestions/pick.test.ts`
 
 **Interfaces:**
-- Produces: `pickSuggestion(now: Date): Promise<{ text: string; source: 'seed' | 'client-quiet'; clientId?: string }>` in `lib/suggestions/pick.ts`. If any `clients` row has `lastActivityAt` older than 3 weeks before `now` (or `null` with the client `recognized = true`), returns a `client-quiet` suggestion naming that client (oldest `lastActivityAt` first). Otherwise, returns the next active row from `suggestions` in round-robin order (tracked by a `lastPickedAt` style approach: pick the least-recently-returned active suggestion).
+- Produces: `pickSuggestion(now: Date): Promise<{ text: string; source: 'seed' | 'client-quiet'; clientId?: string }>` in `lib/suggestions/pick.ts`. If any `clients` row has `lastActivityAt` older than 3 weeks before `now` (or `null` with the client `recognized = true`), returns a `client-quiet` suggestion naming that client (oldest `lastActivityAt` first). Otherwise, picks the active `suggestions` row with the oldest `lastPickedAt` (nulls first, so every suggestion is shown at least once before any repeats), sets that row's `lastPickedAt` to `now`, and returns it.
 - Produces: `GET /api/suggestions` — returns `pickSuggestion(new Date())` as JSON, but only reachable from the dashboard when `GET /api/tasks` would return an empty list (the client decides this; the route itself always answers).
 - Consumes: `clients`/`suggestions` tables (Task 2).
 
