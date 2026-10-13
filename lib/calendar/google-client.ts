@@ -20,6 +20,18 @@ import { refreshGoogleToken } from "@/lib/calendar/oauth";
  * a cancelled event as upcoming — `refreshCalendarCache`'s normal
  * delete-missing logic then takes care of dropping it from the cache if it
  * had previously been cached.
+ *
+ * Important 11: Google's `end.date` for an all-day event is EXCLUSIVE —
+ * one calendar day past the event's actual last day (e.g. a single-day
+ * event spanning just "2026-02-01" is returned as
+ * `start.date: "2026-02-01"`, `end.date: "2026-02-02"`). `toGoogleCalendarEvent`
+ * normalizes this into an INCLUSIVE end instant (one millisecond before
+ * that exclusive midnight) at the one place this API's quirk is read, so
+ * every downstream consumer — the cache, the `GET /api/calendar` response,
+ * `CalendarAgenda`'s day-range display — sees the event's real last day
+ * without re-deriving this themselves, and without the resulting instant
+ * being functionally any different from Google's for "has this event's
+ * window passed" purposes (it's 1ms earlier, not a full day earlier).
  */
 
 export interface GoogleCalendarEvent {
@@ -28,6 +40,7 @@ export interface GoogleCalendarEvent {
   startAt: string;
   endAt: string;
   location?: string;
+  allDay: boolean;
 }
 
 interface GoogleEventDateTime {
@@ -103,13 +116,33 @@ function resolveDateTimeField(field: GoogleEventDateTime, eventId: string): stri
   );
 }
 
+/**
+ * Converts Google's EXCLUSIVE all-day `end.date` (the calendar day AFTER
+ * the event's real last day, always a bare `YYYY-MM-DD` with no time
+ * component) into an inclusive instant: one millisecond before that
+ * exclusive midnight, which is still unambiguously ON the real last day
+ * when only its UTC calendar date is read (as `CalendarAgenda` does for
+ * display), while remaining just as "in the future" as Google's own value
+ * for any instant-comparison purposes (e.g. the `GET /api/calendar`
+ * window filter) — practically identical to Google's exclusive boundary,
+ * just anchored to the correct day.
+ */
+function toInclusiveAllDayEndInstant(exclusiveEndDate: string): string {
+  const exclusiveMidnightUtcMs = Date.parse(`${exclusiveEndDate}T00:00:00.000Z`);
+  return new Date(exclusiveMidnightUtcMs - 1).toISOString();
+}
+
 function toGoogleCalendarEvent(entry: GoogleCalendarApiEvent): GoogleCalendarEvent {
+  const allDay = entry.start.date !== undefined;
+  const rawEndAt = resolveDateTimeField(entry.end, entry.id);
+
   return {
     id: entry.id,
     title: entry.summary ?? NO_TITLE_PLACEHOLDER,
     startAt: resolveDateTimeField(entry.start, entry.id),
-    endAt: resolveDateTimeField(entry.end, entry.id),
+    endAt: allDay ? toInclusiveAllDayEndInstant(rawEndAt) : rawEndAt,
     location: entry.location,
+    allDay,
   };
 }
 

@@ -104,11 +104,18 @@ test("listUpcomingEvents maps a timed event's start/end dateTime fields and loca
       startAt: "2026-01-05T10:00:00.000Z",
       endAt: "2026-01-05T11:00:00.000Z",
       location: "Zoom",
+      allDay: false,
     },
   ]);
 });
 
-test("listUpcomingEvents maps an all-day event's date-only start/end without crashing", async () => {
+// Important 11 regression coverage: Google's `end.date` for an all-day
+// event is EXCLUSIVE (one calendar day past the event's real last day) —
+// `toGoogleCalendarEvent` normalizes this to an inclusive instant (1ms
+// before that exclusive midnight) so every downstream consumer sees the
+// event's real last day.
+
+test("listUpcomingEvents maps a single-day all-day event, flags allDay, and normalizes the exclusive end.date to the same (inclusive) day", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
@@ -118,7 +125,7 @@ test("listUpcomingEvents maps an all-day event's date-only start/end without cra
             id: "evt-allday",
             summary: "Out of office",
             start: { date: "2026-02-01" },
-            end: { date: "2026-02-02" },
+            end: { date: "2026-02-02" }, // exclusive: real event is just Feb 1
             status: "confirmed",
           },
         ],
@@ -133,10 +140,37 @@ test("listUpcomingEvents maps an all-day event's date-only start/end without cra
       id: "evt-allday",
       title: "Out of office",
       startAt: "2026-02-01",
-      endAt: "2026-02-02",
+      endAt: "2026-02-01T23:59:59.999Z",
       location: undefined,
+      allDay: true,
     },
   ]);
+});
+
+test("listUpcomingEvents maps a multi-day all-day event and normalizes the exclusive end.date to the real (inclusive) last day", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      jsonResponse({
+        items: [
+          {
+            id: "evt-filming",
+            summary: "Filming day",
+            start: { date: "2026-02-01" },
+            end: { date: "2026-02-04" }, // exclusive: real last day is Feb 3
+            status: "confirmed",
+          },
+        ],
+      }),
+    ),
+  );
+
+  const [event] = await listUpcomingEvents(14);
+
+  expect(event.allDay).toBe(true);
+  expect(event.startAt).toBe("2026-02-01");
+  // Still reads as Feb 3 (not Feb 4) when only the UTC calendar date matters.
+  expect(event.endAt).toBe("2026-02-03T23:59:59.999Z");
 });
 
 test("listUpcomingEvents excludes events with status 'cancelled'", async () => {

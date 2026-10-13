@@ -18,6 +18,7 @@ function event(overrides: Partial<typeof calendarEventsCache.$inferInsert>) {
     startAt: new Date(now + HOUR_MS),
     endAt: new Date(now + 2 * HOUR_MS),
     location: null,
+    allDay: false,
     ...overrides,
   };
 }
@@ -102,4 +103,34 @@ test("GET /api/calendar returns an empty array when the cache is empty", async (
   const res = await GET();
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual([]);
+});
+
+// Important 11 regression coverage: the allDay flag must reach the
+// dashboard's response, not stop at the database.
+test("GET /api/calendar includes the allDay flag for both all-day and timed events", async () => {
+  const now = Date.now();
+  await db.insert(calendarEventsCache).values([
+    event({
+      googleEventId: "evt-allday",
+      title: "Filming day",
+      startAt: new Date(now),
+      endAt: new Date(now + DAY_MS),
+      allDay: true,
+    }),
+    event({
+      googleEventId: "evt-timed",
+      title: "Client call",
+      startAt: new Date(now + HOUR_MS),
+      endAt: new Date(now + 2 * HOUR_MS),
+      allDay: false,
+    }),
+  ]);
+
+  const res = await GET();
+  const body = await res.json();
+
+  const allDayEvent = body.find((e: { title: string }) => e.title === "Filming day");
+  const timedEvent = body.find((e: { title: string }) => e.title === "Client call");
+  expect(allDayEvent.allDay).toBe(true);
+  expect(timedEvent.allDay).toBe(false);
 });

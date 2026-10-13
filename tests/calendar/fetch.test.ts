@@ -30,6 +30,7 @@ function event(overrides: EventOverrides = {}): GoogleCalendarEvent {
     startAt: "2026-01-05T10:00:00.000Z",
     endAt: "2026-01-05T11:00:00.000Z",
     location: undefined,
+    allDay: false,
     ...overrides,
   };
 }
@@ -143,7 +144,8 @@ test("refreshCalendarCache handles an all-day (date-only) event without crashing
       id: "evt-allday",
       title: "Out of office",
       startAt: "2026-02-01",
-      endAt: "2026-02-02",
+      endAt: "2026-02-01T23:59:59.999Z",
+      allDay: true,
     }),
   ]);
 
@@ -156,4 +158,54 @@ test("refreshCalendarCache handles an all-day (date-only) event without crashing
     .where(eq(calendarEventsCache.googleEventId, "evt-allday"));
   expect(row.startAt).toBeInstanceOf(Date);
   expect(row.endAt).toBeInstanceOf(Date);
+});
+
+// Important 11 regression coverage: the allDay flag itself must flow
+// through the cache, both on first insert and on a later update.
+
+test("refreshCalendarCache stores allDay: true for an all-day event", async () => {
+  mockListUpcomingEvents.mockResolvedValue([
+    event({ id: "evt-allday", allDay: true, startAt: "2026-02-01", endAt: "2026-02-01T23:59:59.999Z" }),
+  ]);
+
+  await refreshCalendarCache();
+
+  const [row] = await db
+    .select()
+    .from(calendarEventsCache)
+    .where(eq(calendarEventsCache.googleEventId, "evt-allday"));
+  expect(row.allDay).toBe(true);
+});
+
+test("refreshCalendarCache stores allDay: false for a timed event", async () => {
+  mockListUpcomingEvents.mockResolvedValue([event({ id: "evt-timed", allDay: false })]);
+
+  await refreshCalendarCache();
+
+  const [row] = await db
+    .select()
+    .from(calendarEventsCache)
+    .where(eq(calendarEventsCache.googleEventId, "evt-timed"));
+  expect(row.allDay).toBe(false);
+});
+
+test("refreshCalendarCache updates allDay on an existing cached row when it changes", async () => {
+  mockListUpcomingEvents.mockResolvedValue([event({ id: "evt-changes", allDay: false })]);
+  await refreshCalendarCache();
+
+  mockListUpcomingEvents.mockResolvedValue([
+    event({
+      id: "evt-changes",
+      allDay: true,
+      startAt: "2026-02-01",
+      endAt: "2026-02-01T23:59:59.999Z",
+    }),
+  ]);
+  await refreshCalendarCache();
+
+  const [row] = await db
+    .select()
+    .from(calendarEventsCache)
+    .where(eq(calendarEventsCache.googleEventId, "evt-changes"));
+  expect(row.allDay).toBe(true);
 });

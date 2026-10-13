@@ -36,6 +36,7 @@ export async function refreshCalendarCache(): Promise<{ cached: number }> {
         startAt: new Date(event.startAt),
         endAt: new Date(event.endAt),
         location: event.location ?? null,
+        allDay: event.allDay,
       })
       .onConflictDoUpdate({
         target: calendarEventsCache.googleEventId,
@@ -44,6 +45,7 @@ export async function refreshCalendarCache(): Promise<{ cached: number }> {
           startAt: new Date(event.startAt),
           endAt: new Date(event.endAt),
           location: event.location ?? null,
+          allDay: event.allDay,
         },
       });
   }

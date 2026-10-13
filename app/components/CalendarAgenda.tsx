@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatEventTiming } from "@/lib/calendar/format";
+import {
+  AUTO_REFRESH_INTERVAL_MS,
+  createAutoRefresh,
+  createBrowserAutoRefreshDeps,
+} from "@/lib/dashboard/auto-refresh";
 
 interface CalendarEvent {
   id: string;
@@ -8,32 +14,23 @@ interface CalendarEvent {
   startAt: string;
   endAt: string;
   location: string | null;
+  allDay: boolean;
 }
 
 type LoadState = "loading" | "ready" | "error";
-
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-});
-
-const timeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-function formatRange(startAt: string, endAt: string): string {
-  const start = new Date(startAt);
-  const end = new Date(endAt);
-  return `${dateFormatter.format(start)}, ${timeFormatter.format(start)}–${timeFormatter.format(end)}`;
-}
 
 /**
  * Self-contained: fetches its own data from `GET /api/calendar` rather than
  * receiving events as a prop, since the calendar agenda has no bearing on
  * the review-queue/to-do emptiness check that gates `SuggestionCard` — it
  * doesn't need to be coordinated with the rest of the dashboard's state.
+ *
+ * Important 5: `load` is also wired up to re-run on focus/visibility
+ * changes and a light polling interval (`createAutoRefresh`), not just
+ * once on mount — otherwise an installed PWA resumed from background could
+ * show a stale agenda for hours. `cancelled` guards every one of those
+ * repeated calls, not just the first, so a call still in flight at unmount
+ * never sets state on an unmounted component.
  */
 export default function CalendarAgenda() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -61,8 +58,15 @@ export default function CalendarAgenda() {
     }
 
     load();
+    const cleanupAutoRefresh = createAutoRefresh(
+      load,
+      AUTO_REFRESH_INTERVAL_MS,
+      createBrowserAutoRefreshDeps(),
+    );
+
     return () => {
       cancelled = true;
+      cleanupAutoRefresh();
     };
   }, []);
 
@@ -92,7 +96,7 @@ export default function CalendarAgenda() {
                 backgroundColor: "#ffffff",
               }}
             >
-              <div style={{ fontSize: 13, color: "#6b7280" }}>{formatRange(event.startAt, event.endAt)}</div>
+              <div style={{ fontSize: 13, color: "#6b7280" }}>{formatEventTiming(event)}</div>
               <div style={{ fontSize: 15, fontWeight: 600 }}>{event.title}</div>
               {event.location ? (
                 <div style={{ fontSize: 13, color: "#6b7280" }}>{event.location}</div>
