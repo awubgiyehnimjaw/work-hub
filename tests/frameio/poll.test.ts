@@ -287,22 +287,28 @@ test("stamps the poll cursor using the time the run started (minus the overlap b
   // sinceISO` window. Simulating a slow `listNewFiles` call makes "started"
   // vs "finished" measurably different, so we can assert the stored cursor
   // tracks the START of the run.
+  //
+  // The injected delay (2000ms) is much larger than the assertion tolerance
+  // (±100ms) so that a reverted "stamp at finish time" implementation —
+  // which would land ~2000ms away from (startedAt - buffer) — genuinely
+  // fails this test instead of slipping inside the tolerance window.
+  const DELAY_MS = 2000;
   const startedAt = Date.now();
   mockListNewFiles.mockImplementation(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     return filesResult([]);
   });
 
   await runFrameioPoll();
   const finishedAt = Date.now();
-  expect(finishedAt - startedAt).toBeGreaterThanOrEqual(300);
+  expect(finishedAt - startedAt).toBeGreaterThanOrEqual(DELAY_MS);
 
   const [state] = await db.select().from(syncState);
   const polledMs = state.frameioLastPolledAt!.getTime();
 
   // Close to (startedAt - buffer)...
-  expect(polledMs).toBeGreaterThanOrEqual(startedAt - CURSOR_OVERLAP_BUFFER_MS - 500);
-  expect(polledMs).toBeLessThanOrEqual(startedAt - CURSOR_OVERLAP_BUFFER_MS + 500);
+  expect(polledMs).toBeGreaterThanOrEqual(startedAt - CURSOR_OVERLAP_BUFFER_MS - 100);
+  expect(polledMs).toBeLessThanOrEqual(startedAt - CURSOR_OVERLAP_BUFFER_MS + 100);
   // ...and meaningfully earlier than (finishedAt - buffer) would be, which
   // is what the pre-fix "stamp on completion" behavior would have produced.
   expect(polledMs).toBeLessThan(finishedAt - CURSOR_OVERLAP_BUFFER_MS);

@@ -23,13 +23,14 @@ import { refreshFrameioToken } from "@/lib/frameio/oauth";
  * continues — to keep discovering folder entries — independently of the
  * file cutoff, bounded only by `MAX_PAGES_PER_FOLDER` (and the overall
  * traversal is bounded by `MAX_FOLDERS_VISITED` / `MAX_FOLDER_DEPTH`).
- * File *collection* still stops early as a pure optimization once a page's
- * entries are provably all at/before the cursor — but that's never relied
- * on for correctness; the final `files.filter` below is what actually
- * enforces the cutoff, and the per-page "oldest" check uses the minimum
- * parsed timestamp across the whole page (never just the last element, and
- * never a raw string compare) since the server's sort order isn't trusted
- * for correctness, only used as an optimization where safe.
+ * Since pagination no longer stops at the cutoff, there is no longer any
+ * benefit to an early-stop on file *collection* either — every page fetched
+ * for folder-discovery purposes has every one of its file entries pushed
+ * into the result unconditionally. The server's `sort=created_at_desc` is
+ * not trusted (and a per-page early-stop on top of an untrusted sort would
+ * risk silently dropping an out-of-order newer file on a later page), so
+ * the final `files.filter` below — a numeric `Date.parse` comparison, never
+ * a raw string compare — is the single source of truth for the cutoff.
  *
  * ASSUMPTION (flagged per the task brief — not independently confirmed
  * beyond the brief's own note): the project-details endpoint used to
@@ -180,9 +181,12 @@ interface FolderQueueEntry {
  * Fetches every page of one folder's file listing. Folder entries found on
  * ANY page are always queued (subject to the depth cap) — pagination for a
  * folder is never cut short by the file cutoff, only by running out of
- * pages or hitting `MAX_PAGES_PER_FOLDER`. File entries are pushed into
- * `files` as an optimization only while `collectingFiles` is still true;
- * correctness is enforced later by the caller's final filter, not here.
+ * pages or hitting `MAX_PAGES_PER_FOLDER`. Every file entry on every page
+ * fetched is pushed into `files` unconditionally (pagination already
+ * continues regardless of the cutoff for folder-discovery purposes, so an
+ * early stop on collection alone would save no HTTP requests — it would
+ * only risk silently dropping a file); the caller's final filter is the only
+ * place the cutoff is enforced.
  *
  * Returns true if any safety cap was hit while processing this folder.
  */
@@ -190,13 +194,11 @@ async function fetchFolderFiles(
   folder: FolderQueueEntry,
   accountId: string,
   accessToken: string,
-  sinceMs: number,
   files: FrameioFile[],
   queue: FolderQueueEntry[],
 ): Promise<boolean> {
   const { folderId, depth } = folder;
   let truncated = false;
-  let collectingFiles = true;
   let pagesFetched = 0;
 
   let pageUrl: string | null =
@@ -217,13 +219,7 @@ async function fetchFolderFiles(
     const response = await frameioFetch(pageUrl, accessToken);
     const page = (await response.json()) as FrameioFilesResponse;
 
-    let minTimestampOnPage = Number.POSITIVE_INFINITY;
     for (const entry of page.data) {
-      const parsed = Date.parse(entry.created_at);
-      if (!Number.isNaN(parsed) && parsed < minTimestampOnPage) {
-        minTimestampOnPage = parsed;
-      }
-
       if (entry.type === "folder") {
         if (depth < MAX_FOLDER_DEPTH) {
           queue.push({ folderId: entry.id, depth: depth + 1 });
@@ -237,20 +233,15 @@ async function fetchFolderFiles(
         continue;
       }
 
-      if (collectingFiles) {
-        files.push(toFrameioFile(entry));
-      }
-    }
-
-    // Once a page's entries are provably all at/before the cursor (using the
-    // minimum parsed timestamp across the *whole* page, never just the last
-    // element, and never a raw string compare), stop bothering to collect
-    // more files — but keep paginating below for folder discovery. This is
-    // purely an optimization: if the server's assumed sort order turns out
-    // to be wrong, the final filter in `listNewFiles` still enforces
-    // correctness, it just won't benefit from this early-stop.
-    if (minTimestampOnPage !== Number.POSITIVE_INFINITY && minTimestampOnPage <= sinceMs) {
-      collectingFiles = false;
+      // Every file entry on every page fetched is collected unconditionally
+      // — pagination already continues regardless of the cutoff (for
+      // folder-discovery purposes), so stopping collection early here would
+      // save no HTTP requests, and the server's assumed sort order isn't
+      // trusted enough to use it to skip pushing an entry. The final
+      // `files.filter` in `listNewFiles` (a numeric `Date.parse` compare,
+      // never a raw string compare) is the single source of truth for what
+      // counts as "new".
+      files.push(toFrameioFile(entry));
     }
 
     pageUrl = page.links?.next
@@ -297,7 +288,6 @@ export async function listNewFiles(sinceISO: string): Promise<ListNewFilesResult
       next,
       accountId,
       accessToken,
-      sinceMs,
       files,
       queue,
     );
@@ -306,10 +296,10 @@ export async function listNewFiles(sinceISO: string): Promise<ListNewFilesResult
     }
   }
 
-  // The pages fetched per folder may still mix entries older and newer than
-  // the cursor (the per-page "stop collecting" check is only an
-  // optimization, not a precise boundary), so filter precisely here —
-  // numerically, never as a raw string compare.
+  // Every page fetched (across every folder) had all of its file entries
+  // collected unconditionally, so `files` here mixes entries older and
+  // newer than the cursor — this filter is what actually enforces the
+  // cutoff, numerically, never as a raw string compare.
   return {
     files: files.filter((file) => Date.parse(file.createdAt) > sinceMs),
     truncated,
