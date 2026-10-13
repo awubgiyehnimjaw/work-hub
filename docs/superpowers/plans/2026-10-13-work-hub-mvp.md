@@ -24,6 +24,7 @@
 - Quick-add for to-dos is an in-app button opening a focused text field — not an OS share-sheet target (unsupported on iOS Safari).
 - Single passcode auth only; no multi-user accounts.
 - Hosting stays on free tiers: Vercel, Neon, GitHub Actions — no paid cron tier required.
+- Database tests run against an in-memory PGlite instance (real Postgres semantics, no external service, no Docker) rather than a live Neon database. `lib/db/client.ts` selects PGlite when `process.env.NODE_ENV === 'test'` (set automatically by Vitest) and the real Neon connection (via `DATABASE_URL`) otherwise. This is transparent to every other task: DB-touching functions keep the exact signatures already specified in this plan (no `db` parameter threading) — they import the shared `db` export as normal. Drizzle-kit migrations are plain SQL and apply identically to both backends. Each test file gets its own fresh in-memory PGlite instance (no path = ephemeral, no cross-file state).
 
 ## Review Focus
 
@@ -143,7 +144,7 @@ git commit -m "chore: scaffold Next.js project with health check"
 
 - [ ] **Step 1: Define the Drizzle schema** in `lib/db/schema.ts` per the table list above.
 
-- [ ] **Step 2: Set up migrations** (`drizzle-kit`) and run the initial migration against a Neon dev database.
+- [ ] **Step 2: Set up migrations** (`drizzle-kit generate`) producing plain SQL migration files from the schema. There is no live Neon database available yet (that's provisioned at deploy time, Task 16) — implement `lib/db/client.ts` per the Global Constraints test-DB ruling (PGlite when `NODE_ENV === 'test'`, Neon via `DATABASE_URL` otherwise), and apply the generated migration SQL to a PGlite instance to verify it runs cleanly.
 
 - [ ] **Step 3: Write the failing test** for seeding.
 
