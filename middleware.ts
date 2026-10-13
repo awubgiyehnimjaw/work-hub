@@ -2,10 +2,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE_NAME, verifySessionCookie } from "@/lib/auth/session";
 
 // Everything is behind the single passcode session except: the login page
-// itself, the auth routes used to establish/clear that session, and the
-// cron routes — those get their own separate bearer-secret auth (added in
-// a later task), not this cookie check.
-const PUBLIC_PATH_PREFIXES = ["/login", "/api/auth", "/api/cron"];
+// itself, the auth routes used to establish/clear that session, the cron
+// routes (which get their own separate bearer-secret auth), and the PWA
+// static assets (manifest, service worker, icons). Those last three must
+// stay reachable without a session cookie: the root layout's
+// `<link rel="manifest">`/service-worker registration run on every page
+// load including the unauthenticated /login page, and a redirect-to-login
+// response in place of the real file would make the manifest invalid and
+// service-worker registration fail (wrong MIME type) instead of just
+// quietly skipping. None of these expose any user data — same category as
+// favicon.ico, already exempted below via the matcher.
+const PUBLIC_PATH_PREFIXES = ["/login", "/api/auth", "/api/cron", "/manifest.json", "/sw.js", "/icons"];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATH_PREFIXES.some(

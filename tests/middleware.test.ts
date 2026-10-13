@@ -39,15 +39,20 @@ test("protected path with a valid session cookie passes through", () => {
   expect(res.status).toBe(200);
 });
 
-test.each(["/login", "/api/auth/login", "/api/auth/logout", "/api/cron/poll-frameio"])(
-  "allowlisted path %s with no cookie passes through without redirect",
-  (path) => {
-    const res = middleware(requestFor(path));
+test.each([
+  "/login",
+  "/api/auth/login",
+  "/api/auth/logout",
+  "/api/cron/poll-frameio",
+  "/manifest.json",
+  "/sw.js",
+  "/icons/icon-192.png",
+])("allowlisted path %s with no cookie passes through without redirect", (path) => {
+  const res = middleware(requestFor(path));
 
-    expect(res.headers.get("location")).toBeNull();
-    expect(res.status).toBe(200);
-  },
-);
+  expect(res.headers.get("location")).toBeNull();
+  expect(res.status).toBe(200);
+});
 
 test("protected path with a tampered/invalid cookie redirects to /login", () => {
   const res = middleware(requestFor("/", "garbage"));

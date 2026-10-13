@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import CalendarAgenda from "./components/CalendarAgenda";
+import EnableNotificationsButton from "./components/EnableNotificationsButton";
 import ReviewQueue from "./components/ReviewQueue";
 import SuggestionCard from "./components/SuggestionCard";
 import TodoList from "./components/TodoList";
@@ -91,6 +92,10 @@ export default function HomePage() {
         <a href="/history" style={{ fontSize: 14, color: "#6b7280", textDecoration: "none" }}>
           History →
         </a>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <EnableNotificationsButton />
       </div>
 
       {state === "loading" ? <p style={{ color: "#6b7280" }}>Loading…</p> : null}
