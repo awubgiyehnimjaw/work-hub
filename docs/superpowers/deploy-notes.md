@@ -65,11 +65,12 @@ too.
 | --- | --- |
 | `DATABASE_URL` | The Neon pooled connection string from §1.1. **Mandatory in production — see §0.** |
 | `SESSION_SECRET` | Any long random string. Signs the passcode session cookie (`lib/auth/session.ts`). Generate one with `openssl rand -hex 32`. |
-| `WORK_HUB_PASSCODE_HASH` | A bcrypt hash of the single passcode Callum will type at `/login` — **not** the raw passcode. Generate it by running, from the project root, `node -e "console.log(require('bcryptjs').hashSync('YOUR-PASSCODE-HERE', 10))"` (uses the `bcryptjs` dependency already in `package.json`) and pasting the printed hash. |
+| `WORK_HUB_PASSCODE_HASH` | A bcrypt hash of the single passcode Callum will type at `/login` — **not** the raw passcode. Generate it by running, from the project root, `node -e "console.log(require('bcryptjs').hashSync('YOUR-PASSCODE-HERE', 10))"` (uses the `bcryptjs` dependency already in `package.json`) and pasting the printed hash. **Use a real passphrase of at least 12 characters, not a short 4-6 digit PIN** — the login route now rate-limits guessing attempts (`lib/auth/rate-limit.ts`: 5 failed attempts triggers a 60-second lockout), but bcrypt's cost factor alone doesn't meaningfully protect a short numeric PIN against a determined/automated guesser, and this app holds real client business data behind it. |
 | `CRON_SECRET` | Any long random string (e.g. `openssl rand -hex 32`). Gates `/api/cron/*` (`lib/auth/cron-secret.ts`). Must be set to the **exact same value** as the `CRON_SECRET` GitHub Actions secret in §6 — the GitHub Actions workflow sends this as a bearer token and Vercel checks it against this env var. |
 | `VAPID_PUBLIC_KEY` | Generate a VAPID key pair with `npx web-push generate-vapid-keys` (uses the `web-push` dependency already in `package.json`). Use the printed public key here. |
 | `VAPID_PRIVATE_KEY` | The private key from the same `web-push generate-vapid-keys` run. Server-side only — never expose this one under a `NEXT_PUBLIC_` name. |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | The **same value** as `VAPID_PUBLIC_KEY`, just also set under this `NEXT_PUBLIC_`-prefixed name so the browser-side `EnableNotificationsButton` component can read it for `pushManager.subscribe({ applicationServerKey })`. |
+| `VAPID_SUBJECT` | A real `mailto:you@example.com` address or `https://` URL Callum controls — **not** a placeholder. This is the Web Push protocol's `sub` claim, which identifies the sender to push services; Apple's push service in particular is strict about it. `lib/push/send.ts` throws if this is unset, the same fail-closed pattern as the VAPID keys themselves, rather than silently sending a fake contact address. |
 | `FRAMEIO_CLIENT_ID` | The Client ID of an Adobe Developer Console OAuth integration for Frame.io — see §3.1. |
 | `FRAMEIO_CLIENT_SECRET` | The Client Secret from that same Adobe Developer Console integration. |
 | `FRAMEIO_PROJECT_ID` | The Frame.io project Callum's editor delivers cuts into. Visible in the project's URL when viewing it at [app.frame.io](https://app.frame.io), or via the Frame.io V4 API's project list. |
@@ -130,6 +131,34 @@ This reads `dbCredentials.url` from `drizzle.config.ts` (which is wired to
 change ships a new migration) is safe — already-applied migrations are
 skipped.
 
+### 4.1 Seed the database
+
+**Do this immediately after running migrations, before anything else
+touches the app.** Migrations create empty tables — nothing inserts the
+known client tags or the growth-suggestion seed list on its own. Skipping
+this step has real consequences: `/api/suggestions` throws ("No active
+suggestions available to pick from") the moment the review queue and
+to-do list are both empty, and the first real Frame.io upload
+auto-creates its client row with `recognized: false`, permanently
+mis-flagging a real client as unrecognized.
+
+```bash
+DATABASE_URL="<your Neon connection string>" npm run db:seed
+```
+
+This runs `lib/db/seed-cli.ts`, which calls the same `seedClients()` and
+`seedSuggestions()` used by the test suite. Both are idempotent (upsert
+on each table's unique key), so re-running this later — e.g. after adding
+a new client tag or suggestion to the seed lists in `lib/db/seed.ts` — is
+safe and only inserts what's new.
+
+As a second line of defense, `runFrameioPoll` (`lib/frameio/poll.ts`) also
+calls both seed functions idempotently on every poll run, so a skipped
+manual seed step self-heals on the very first scheduled poll rather than
+leaving the app broken until someone remembers to run this command. Don't
+rely on that instead of running this step, though — until the first poll
+runs (or this command does), `/api/suggestions` is still broken.
+
 ## 5. Connect Frame.io and Google Calendar (one-time, logged in)
 
 Both of Work Hub's external integrations are connected by visiting a URL
@@ -155,10 +184,25 @@ stored row rather than erroring.
 ## 6. GitHub Actions: scheduled cron calls
 
 `.github/workflows/cron.yml` calls the two protected cron endpoints on a
-schedule — `poll-frameio` every 3 minutes, `fetch-calendar` every 15
+schedule — `poll-frameio` every 5 minutes, `fetch-calendar` every 15
 minutes — each sending `Authorization: Bearer <CRON_SECRET>`. It needs
 two repo secrets (GitHub repo → Settings → Secrets and variables →
 Actions → New repository secret):
+
+**This repo must be public for GitHub Actions' free minutes to be
+enough.** Each cron trigger fires its own billed workflow run (minimum 1
+minute each, per GitHub's billing): poll-frameio every 5 minutes is
+~8,640 runs/month, fetch-calendar every 15 minutes is another ~2,880 —
+roughly 11,500 billed minutes/month combined. That's well past the 2,000
+free minutes/month GitHub gives a PRIVATE repo, but unlimited (and free)
+for a PUBLIC one. This is safe to
+do: nothing secret is ever committed to the repo itself — `DATABASE_URL`,
+`CRON_SECRET`, OAuth client secrets, VAPID keys, etc. are all environment
+variables (Vercel) or GitHub Actions secrets, never source files. If
+Callum would rather keep the repo private anyway, swap this workflow for
+a free external scheduler like [cron-job.org](https://cron-job.org)
+calling the same two `/api/cron/*` URLs with the same bearer header
+instead of using GitHub Actions' schedule trigger.
 
 | Secret | Value |
 | --- | --- |
