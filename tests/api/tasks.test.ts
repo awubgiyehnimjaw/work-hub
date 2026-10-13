@@ -3,14 +3,22 @@ import { beforeEach, expect, test } from "vitest";
 import { PATCH } from "@/app/api/tasks/[id]/route";
 import { GET, POST } from "@/app/api/tasks/route";
 import { db } from "@/lib/db/client";
-import { tasks } from "@/lib/db/schema";
+import { clients, tasks } from "@/lib/db/schema";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NONEXISTENT_ID = "00000000-0000-0000-0000-000000000000";
 
 beforeEach(async () => {
+  // Tasks before clients — `tasks.clientId` is a (non-cascading) FK, so
+  // clearing clients first while tasks referencing them still exist would
+  // violate it.
   await db.delete(tasks);
+  await db.delete(clients);
 });
+
+function getRequest(query = "") {
+  return new Request(`http://localhost/api/tasks${query}`);
+}
 
 function postRequest(body: unknown) {
   return new Request("http://localhost/api/tasks", {
@@ -57,7 +65,7 @@ test("GET /api/tasks excludes completed tasks and tasks still snoozed in the fut
     },
   ]);
 
-  const res = await GET();
+  const res = await GET(getRequest());
   expect(res.status).toBe(200);
   const body = await res.json();
 
@@ -75,7 +83,7 @@ test("GET /api/tasks includes a task whose snoozedUntil has already passed", asy
     snoozedUntil: new Date(now - 1000),
   });
 
-  const res = await GET();
+  const res = await GET(getRequest());
   const body = await res.json();
 
   expect(res.status).toBe(200);
@@ -100,7 +108,7 @@ test("GET /api/tasks sorts oldest-first and annotates isStale per task", async (
     },
   ]);
 
-  const res = await GET();
+  const res = await GET(getRequest());
   const body = await res.json();
 
   expect(body.map((t: { title: string }) => t.title)).toEqual([
@@ -186,7 +194,7 @@ test("snoozing a task with a PAST timestamp makes it reappear in the very next G
   );
   expect(futureRes.status).toBe(200);
 
-  const excludedRes = await GET();
+  const excludedRes = await GET(getRequest());
   const excludedBody = await excludedRes.json();
   expect(excludedBody).toHaveLength(0);
 
@@ -199,7 +207,7 @@ test("snoozing a task with a PAST timestamp makes it reappear in the very next G
   );
   expect(pastRes.status).toBe(200);
 
-  const res = await GET();
+  const res = await GET(getRequest());
   const body = await res.json();
   expect(body).toHaveLength(1);
   expect(body[0].id).toBe(task.id);
@@ -236,5 +244,131 @@ test("PATCH /api/tasks/:id returns 400 for a snooze action with a missing until"
     .returning();
 
   const res = await PATCH(patchRequest({ action: "snooze" }), patchContext(task.id));
+  expect(res.status).toBe(400);
+});
+
+test("GET /api/tasks?status=completed returns only completed tasks, ignoring any snoozedUntil", async () => {
+  const now = Date.now();
+  await db.insert(tasks).values([
+    {
+      type: "todo",
+      title: "still active",
+      status: "active",
+      createdAt: new Date(now - 3 * DAY_MS),
+    },
+    {
+      type: "review",
+      title: "done, never snoozed",
+      status: "completed",
+      createdAt: new Date(now - 3 * DAY_MS),
+      completedAt: new Date(now),
+    },
+    {
+      type: "review",
+      title: "done, with a leftover future snoozedUntil",
+      status: "completed",
+      createdAt: new Date(now - 3 * DAY_MS),
+      completedAt: new Date(now),
+      snoozedUntil: new Date(now + DAY_MS),
+    },
+  ]);
+
+  const res = await GET(getRequest("?status=completed"));
+  expect(res.status).toBe(200);
+  const body = await res.json();
+
+  expect(body.map((t: { title: string }) => t.title).sort()).toEqual([
+    "done, never snoozed",
+    "done, with a leftover future snoozedUntil",
+  ]);
+});
+
+test("GET /api/tasks with no status param (and ?status=active) behaves exactly like Task 11's default", async () => {
+  const now = Date.now();
+  await db.insert(tasks).values([
+    {
+      type: "todo",
+      title: "active, unsnoozed",
+      status: "active",
+      createdAt: new Date(now - 3 * DAY_MS),
+    },
+    {
+      type: "todo",
+      title: "completed",
+      status: "completed",
+      createdAt: new Date(now - 3 * DAY_MS),
+      completedAt: new Date(now),
+    },
+    {
+      type: "todo",
+      title: "snoozed into the future",
+      status: "active",
+      createdAt: new Date(now - 3 * DAY_MS),
+      snoozedUntil: new Date(now + DAY_MS),
+    },
+  ]);
+
+  const defaultRes = await GET(getRequest());
+  const explicitActiveRes = await GET(getRequest("?status=active"));
+
+  const defaultBody = await defaultRes.json();
+  const explicitActiveBody = await explicitActiveRes.json();
+
+  expect(defaultBody).toHaveLength(1);
+  expect(defaultBody[0].title).toBe("active, unsnoozed");
+  expect(explicitActiveBody).toEqual(defaultBody);
+});
+
+test("GET /api/tasks?clientId=<uuid> restricts results to that client's tasks", async () => {
+  const [clientA] = await db
+    .insert(clients)
+    .values({ tag: "ClientA", displayName: "Client A", recognized: true })
+    .returning();
+  const [clientB] = await db
+    .insert(clients)
+    .values({ tag: "ClientB", displayName: "Client B", recognized: true })
+    .returning();
+
+  await db.insert(tasks).values([
+    { type: "review", title: "A's task", status: "active", clientId: clientA.id },
+    { type: "review", title: "B's task", status: "active", clientId: clientB.id },
+  ]);
+
+  const res = await GET(getRequest(`?clientId=${clientA.id}`));
+  expect(res.status).toBe(200);
+  const body = await res.json();
+
+  expect(body).toHaveLength(1);
+  expect(body[0].title).toBe("A's task");
+});
+
+test("GET /api/tasks annotates each task with clientName from the clients join, null when there is no client", async () => {
+  const [client] = await db
+    .insert(clients)
+    .values({ tag: "Lovelots", displayName: "Lovelots", recognized: true })
+    .returning();
+
+  await db.insert(tasks).values([
+    { type: "review", title: "Review — Lovelots", status: "active", clientId: client.id },
+    { type: "todo", title: "no client", status: "active" },
+  ]);
+
+  const res = await GET(getRequest());
+  const body = await res.json();
+
+  const review = body.find((t: { title: string }) => t.title === "Review — Lovelots");
+  const todo = body.find((t: { title: string }) => t.title === "no client");
+
+  expect(review.clientName).toBe("Lovelots");
+  expect(todo.clientName).toBeNull();
+});
+
+test("GET /api/tasks returns 400 for an unrecognized status value", async () => {
+  const res = await GET(getRequest("?status=bogus"));
+  expect(res.status).toBe(400);
+});
+
+test("GET /api/tasks returns 400 for a malformed clientId", async () => {
+  const res = await GET(getRequest("?clientId=not-a-uuid"));
   expect(res.status).toBe(400);
 });

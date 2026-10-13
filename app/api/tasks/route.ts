@@ -1,33 +1,78 @@
 import { and, asc, eq, isNull, lte, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
-import { tasks } from "@/lib/db/schema";
+import { clients, tasks } from "@/lib/db/schema";
 import { isTaskStale } from "@/lib/tasks/aging";
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
- * All open work: active tasks that aren't currently snoozed into the
- * future. A `snoozedUntil` that has already elapsed no longer excludes
- * the row — it reappears on the very next call, same as an unsnoozed
- * task. Sorted oldest-first so the longest-waiting item leads the list,
- * and each row carries a computed `isStale` flag for the UI to flag.
+ * Open work (default, and also explicit `?status=active`): active tasks
+ * that aren't currently snoozed into the future. A `snoozedUntil` that has
+ * already elapsed no longer excludes the row — it reappears on the very
+ * next call, same as an unsnoozed task.
+ *
+ * `?status=completed` (added for Task 14's history page) drops the
+ * active-only/snooze filter entirely — a completed task is done regardless
+ * of any leftover `snoozedUntil` — and returns everything with
+ * `status = 'completed'` instead.
+ *
+ * `?clientId=<uuid>` (either status) further restricts to that one
+ * client's tasks.
+ *
+ * Every row is left-joined against `clients` and annotated with
+ * `clientName` (the client's `displayName`, or `null` for a task with no
+ * client — e.g. a `todo`) — the history page groups by this without a
+ * second request.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const statusParam = url.searchParams.get("status");
+  const clientIdParam = url.searchParams.get("clientId");
+
+  if (statusParam !== null && statusParam !== "active" && statusParam !== "completed") {
+    return NextResponse.json(
+      { error: "status must be 'active' or 'completed'" },
+      { status: 400 },
+    );
+  }
+  if (clientIdParam !== null && !UUID_RE.test(clientIdParam)) {
+    return NextResponse.json(
+      { error: "clientId must be a valid UUID" },
+      { status: 400 },
+    );
+  }
+
   const now = new Date();
+  const status = statusParam ?? "active";
+
+  // Exactly Task 11's original where-clause when status is (or defaults
+  // to) "active" — preserved verbatim rather than reshaped, so the
+  // dashboard's existing behavior can't drift.
+  const statusFilter =
+    status === "active"
+      ? and(
+          eq(tasks.status, "active"),
+          or(isNull(tasks.snoozedUntil), lte(tasks.snoozedUntil, now)),
+        )
+      : eq(tasks.status, "completed");
+
+  const where = clientIdParam
+    ? and(statusFilter, eq(tasks.clientId, clientIdParam))
+    : statusFilter;
 
   const rows = await db
-    .select()
+    .select({ task: tasks, clientName: clients.displayName })
     .from(tasks)
-    .where(
-      and(
-        eq(tasks.status, "active"),
-        or(isNull(tasks.snoozedUntil), lte(tasks.snoozedUntil, now)),
-      ),
-    )
+    .leftJoin(clients, eq(tasks.clientId, clients.id))
+    .where(where)
     .orderBy(asc(tasks.createdAt));
 
-  const annotated = rows.map((task) => ({
+  const annotated = rows.map(({ task, clientName }) => ({
     ...task,
     isStale: isTaskStale(task, now),
+    clientName: clientName ?? null,
   }));
 
   return NextResponse.json(annotated);
