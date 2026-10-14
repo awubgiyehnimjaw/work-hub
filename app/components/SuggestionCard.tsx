@@ -11,10 +11,9 @@ interface Suggestion {
 type LoadState = "loading" | "ready" | "error";
 
 /**
- * Only ever mounted by `app/page.tsx` when both the review queue and to-do
- * list are empty — this component doesn't re-check that condition itself,
- * it just fetches and shows whatever `GET /api/suggestions` picks the
- * moment it's mounted.
+ * Always mounted alongside the review queue and to-do list, regardless of
+ * whether either has items — fetches and shows whatever
+ * `GET /api/suggestions` picks the moment it's mounted.
  */
 export default function SuggestionCard() {
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
@@ -61,7 +60,7 @@ export default function SuggestionCard() {
       }}
     >
       <h2 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 8px", color: "#3730a3" }}>
-        {state === "error" ? "Nothing queued" : "Nothing queued — something to work on"}
+        {state === "error" ? "Growth idea" : "Also worth doing"}
       </h2>
       {state === "error" ? (
         <p role="alert" style={{ margin: 0, color: "#b42318" }}>

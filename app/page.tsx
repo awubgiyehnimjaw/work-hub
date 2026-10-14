@@ -98,7 +98,10 @@ export default function HomePage() {
 
   const reviewTasks = tasks.filter((task) => task.type === "review");
   const todoTasks = tasks.filter((task) => task.type === "todo");
-  const showSuggestion = state === "ready" && reviewTasks.length === 0 && todoTasks.length === 0;
+  // Always shown when loaded, not just when the queue is empty — a growth
+  // idea is worth surfacing alongside active work too, not only as an
+  // idle-time filler.
+  const showSuggestion = state === "ready";
 
   return (
     <main style={{ maxWidth: 480, margin: "0 auto", padding: 16, fontFamily: "system-ui, sans-serif" }}>
