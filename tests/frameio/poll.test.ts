@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, ilike } from "drizzle-orm";
 import { beforeEach, expect, test, vi } from "vitest";
 import { db } from "@/lib/db/client";
 import { seedClients } from "@/lib/db/seed";
@@ -105,6 +105,30 @@ test("creates a task for a recognized client tag", async () => {
   const [client] = await db.select().from(clients).where(eq(clients.tag, "Lovelots"));
   expect(client.recognized).toBe(true);
   expect(client.lastActivityAt).not.toBeNull();
+});
+
+test("matches a known client tag case-insensitively, does not create a second unrecognized row", async () => {
+  mockListNewFiles.mockResolvedValue(filesResult([
+    file({ id: "f-lowercase-tag", name: "Cut (that place).mp4" }),
+  ]));
+
+  const result = await runFrameioPoll();
+
+  expect(result).toEqual({ created: 1, unrecognized: 0 });
+
+  const matchingClients = await db
+    .select()
+    .from(clients)
+    .where(ilike(clients.tag, "That Place"));
+  expect(matchingClients).toHaveLength(1);
+  expect(matchingClients[0].tag).toBe("That Place");
+  expect(matchingClients[0].recognized).toBe(true);
+
+  const [task] = await db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.frameioFileId, "f-lowercase-tag"));
+  expect(task.title).toBe("Review — That Place");
 });
 
 test("creates a flagged task for an unrecognized tag, never drops it", async () => {

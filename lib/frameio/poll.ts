@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, lte } from "drizzle-orm";
+import { and, eq, gt, ilike, isNotNull, lte } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { clients, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
 import { seedClients, seedSuggestions } from "@/lib/db/seed";
@@ -54,10 +54,12 @@ async function markPolled(at: Date): Promise<void> {
 async function getOrCreateClient(tag: string | null): Promise<ClientRow> {
   const effectiveTag = tag && tag.length > 0 ? tag : NO_TAG_PLACEHOLDER;
 
+  // Case-insensitive: an editor typing "that place" should match the
+  // seeded "That Place" row, not spawn a second "unrecognized" client.
   const [existing] = await db
     .select()
     .from(clients)
-    .where(eq(clients.tag, effectiveTag));
+    .where(ilike(clients.tag, effectiveTag));
   if (existing) {
     return existing;
   }
@@ -81,7 +83,7 @@ async function getOrCreateClient(tag: string | null): Promise<ClientRow> {
   const [raceWinner] = await db
     .select()
     .from(clients)
-    .where(eq(clients.tag, effectiveTag));
+    .where(ilike(clients.tag, effectiveTag));
   if (!raceWinner) {
     throw new Error(`Failed to find or create client for tag "${effectiveTag}"`);
   }
