@@ -6,7 +6,9 @@ export interface ReviewTask {
   id: string;
   title: string;
   frameioUrl: string | null;
+  sourceFileName: string | null;
   isStale: boolean;
+  clientName: string | null;
   clientRecognized: boolean | null;
 }
 
@@ -77,8 +79,19 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                   padding: 14,
                 }}
               >
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-                  <strong style={{ fontSize: 16 }}>{task.title}</strong>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                  {task.sourceFileName ? (
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 700 }}>
+                        Review — &quot;{task.sourceFileName}&quot;
+                      </div>
+                      <div style={{ fontSize: 14, color: "#4b5563", marginTop: 2 }}>
+                        Client — {task.clientName ?? "Unrecognized"}
+                      </div>
+                    </div>
+                  ) : (
+                    <strong style={{ fontSize: 16 }}>{task.title}</strong>
+                  )}
                   <span style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                     {task.clientRecognized === false ? (
                       <span

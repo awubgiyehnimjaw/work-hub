@@ -99,6 +99,7 @@ test("creates a task for a recognized client tag", async () => {
     .where(eq(tasks.frameioFileId, "f-recognized"));
   expect(taskRows).toHaveLength(1);
   expect(taskRows[0].title).toBe("Review — Lovelots");
+  expect(taskRows[0].sourceFileName).toBe("Cut (Lovelots).mp4");
   expect(taskRows[0].type).toBe("review");
   expect(taskRows[0].status).toBe("active");
 

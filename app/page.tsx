@@ -17,7 +17,9 @@ interface ApiTask {
   type: "review" | "todo";
   title: string;
   frameioUrl: string | null;
+  sourceFileName: string | null;
   isStale: boolean;
+  clientName: string | null;
   clientRecognized: boolean | null;
 }
 

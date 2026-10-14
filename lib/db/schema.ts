@@ -34,6 +34,11 @@ export const tasks = pgTable("tasks", {
   clientId: uuid("client_id").references(() => clients.id),
   frameioFileId: text("frameio_file_id").unique(),
   frameioUrl: text("frameio_url"),
+  // The video's filename as Frame.io returned it (e.g. the editor's raw
+  // "01.114 SALMON RICE (that place).mp4"), stored verbatim for display
+  // alongside the client name — never re-derived or guessed. Null for
+  // to-dos, which have no source file.
+  sourceFileName: text("source_file_name"),
   status: taskStatusEnum("status").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),

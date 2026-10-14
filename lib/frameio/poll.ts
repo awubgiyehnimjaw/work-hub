@@ -119,6 +119,7 @@ async function createReviewTask(
       clientId: client.id,
       frameioFileId: file.id,
       frameioUrl,
+      sourceFileName: file.name,
       status: "active",
     })
     .onConflictDoNothing({ target: tasks.frameioFileId })
