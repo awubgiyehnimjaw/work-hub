@@ -8,6 +8,7 @@ interface ApiTask {
   title: string;
   clientId: string | null;
   clientName: string | null;
+  sourceFileName: string | null;
   completedAt: string | null;
 }
 
@@ -72,6 +73,8 @@ function groupByClient(reviewTasks: ApiTask[]): ClientGroup[] {
 export default function HistoryPage() {
   const [groups, setGroups] = useState<ClientGroup[]>([]);
   const [state, setState] = useState<LoadState>("loading");
+  const [reopeningId, setReopeningId] = useState<string | null>(null);
+  const [reopenErrorId, setReopenErrorId] = useState<string | null>(null);
 
   const loadHistory = useCallback(async () => {
     setState("loading");
@@ -92,6 +95,30 @@ export default function HistoryPage() {
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
+
+  // Undo for an accidental "Complete" tap — puts the task back into the
+  // active review queue. Refetches rather than patching local state in
+  // place, since the reopened task needs to disappear from this page
+  // entirely (it's no longer completed).
+  async function handleReopen(id: string) {
+    setReopeningId(id);
+    setReopenErrorId(null);
+    try {
+      const res = await fetch(`/api/tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reopen" }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to reopen task");
+      }
+      await loadHistory();
+    } catch {
+      setReopenErrorId(id);
+    } finally {
+      setReopeningId(null);
+    }
+  }
 
   return (
     <main style={{ maxWidth: 480, margin: "0 auto", padding: 16, fontFamily: "system-ui, sans-serif" }}>
@@ -133,20 +160,48 @@ export default function HistoryPage() {
                   <li
                     key={task.id}
                     style={{
-                      display: "flex",
-                      alignItems: "baseline",
-                      justifyContent: "space-between",
-                      gap: 8,
                       border: "1px solid #e5e7eb",
                       borderRadius: 10,
                       padding: "10px 12px",
                       backgroundColor: "#ffffff",
                     }}
                   >
-                    <span style={{ fontSize: 15 }}>{task.title}</span>
-                    <span style={{ fontSize: 13, color: "#6b7280", whiteSpace: "nowrap" }}>
-                      {formatCompletedAt(task.completedAt)}
-                    </span>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 15, fontWeight: 600 }}>
+                        {task.sourceFileName
+                          ? <>Review — &quot;{task.sourceFileName}&quot;</>
+                          : task.title}
+                      </span>
+                      <span style={{ fontSize: 13, color: "#6b7280", whiteSpace: "nowrap" }}>
+                        {formatCompletedAt(task.completedAt)}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 6 }}>
+                      <span style={{ fontSize: 13, color: "#6b7280" }}>
+                        Client — {group.clientName}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleReopen(task.id)}
+                        disabled={reopeningId === task.id}
+                        style={{
+                          fontSize: 13,
+                          color: "#374151",
+                          background: "#f3f4f6",
+                          border: "1px solid #d1d5db",
+                          borderRadius: 6,
+                          padding: "4px 10px",
+                          cursor: reopeningId === task.id ? "default" : "pointer",
+                        }}
+                      >
+                        {reopeningId === task.id ? "Undoing…" : "Undo"}
+                      </button>
+                    </div>
+                    {reopenErrorId === task.id ? (
+                      <p role="alert" style={{ margin: "6px 0 0", fontSize: 13, color: "#b42318" }}>
+                        Couldn&apos;t undo — try again.
+                      </p>
+                    ) : null}
                   </li>
                 ))}
               </ul>

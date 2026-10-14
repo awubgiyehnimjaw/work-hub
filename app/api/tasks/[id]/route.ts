@@ -5,6 +5,7 @@ import { clients, tasks } from "@/lib/db/schema";
 
 type PatchBody =
   | { action: "complete" }
+  | { action: "reopen" }
   | { action: "snooze"; until: Date };
 
 function parsePatchBody(body: unknown): PatchBody | null {
@@ -15,6 +16,10 @@ function parsePatchBody(body: unknown): PatchBody | null {
 
   if (action === "complete") {
     return { action: "complete" };
+  }
+
+  if (action === "reopen") {
+    return { action: "reopen" };
   }
 
   if (action === "snooze") {
@@ -33,10 +38,13 @@ function parsePatchBody(body: unknown): PatchBody | null {
 }
 
 /**
- * Completes or snoozes a single task (either a `review` or a `todo` —
- * the action doesn't care which). A past `until` is accepted as-is: that's
- * exactly how a snoozed task is made to reappear immediately on the next
- * `GET /api/tasks` call, per `isTaskStale`'s "snoozedUntil <= now" rule.
+ * Completes, reopens, or snoozes a single task (either a `review` or a
+ * `todo` — the action doesn't care which). A past `until` is accepted
+ * as-is: that's exactly how a snoozed task is made to reappear immediately
+ * on the next `GET /api/tasks` call, per `isTaskStale`'s "snoozedUntil <=
+ * now" rule. `reopen` is the undo for an accidental `complete` — puts the
+ * task back to `active` with `completedAt` cleared, from anywhere it's
+ * shown as completed (currently only the history page).
  *
  * Important 6: the spec requires `clients.lastActivityAt` to update
  * "whenever a review task is created OR completed" — `createReviewTask`
@@ -57,7 +65,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         error:
-          "Body must be { action: 'complete' } or { action: 'snooze', until: <ISO string> }",
+          "Body must be { action: 'complete' }, { action: 'reopen' }, or { action: 'snooze', until: <ISO string> }",
       },
       { status: 400 },
     );
@@ -67,7 +75,9 @@ export async function PATCH(
   const updateValues =
     parsed.action === "complete"
       ? { status: "completed" as const, completedAt: now }
-      : { snoozedUntil: parsed.until };
+      : parsed.action === "reopen"
+        ? { status: "active" as const, completedAt: null }
+        : { snoozedUntil: parsed.until };
 
   const [updated] = await db
     .update(tasks)

@@ -159,6 +159,38 @@ test("PATCH /api/tasks/:id with action 'complete' sets status and completedAt", 
   expect(updated.completedAt).not.toBeNull();
 });
 
+test("PATCH /api/tasks/:id with action 'reopen' undoes an accidental complete", async () => {
+  const [task] = await db
+    .insert(tasks)
+    .values({
+      type: "review",
+      title: "Review — Lovelots",
+      status: "completed",
+      completedAt: new Date(),
+    })
+    .returning();
+
+  const res = await PATCH(patchRequest({ action: "reopen" }), patchContext(task.id));
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.status).toBe("active");
+  expect(body.completedAt).toBeNull();
+
+  const [updated] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+  expect(updated.status).toBe("active");
+  expect(updated.completedAt).toBeNull();
+
+  // The reopened task must be visible again via the normal active-task list.
+  const listRes = await GET(new Request("http://localhost/api/tasks"));
+  const listBody = await listRes.json();
+  expect(listBody.some((t: { id: string }) => t.id === task.id)).toBe(true);
+});
+
+test("PATCH /api/tasks/:id with action 'reopen' returns 404 for a nonexistent id", async () => {
+  const res = await PATCH(patchRequest({ action: "reopen" }), patchContext(NONEXISTENT_ID));
+  expect(res.status).toBe(404);
+});
+
 test("PATCH /api/tasks/:id with action 'snooze' sets snoozedUntil to the given ISO timestamp", async () => {
   const [task] = await db
     .insert(tasks)
