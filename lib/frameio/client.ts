@@ -6,12 +6,19 @@ import { refreshFrameioToken } from "@/lib/frameio/oauth";
 /**
  * Frame.io V4 API client for polling new review files.
  *
- * Verified (not guessed) shape of the file-listing endpoint:
- * `GET /v4/accounts/{account_id}/folders/{folder_id}/files`, header
+ * Verified (not guessed, confirmed against the live API) shape of the
+ * folder-listing endpoint:
+ * `GET /v4/accounts/{account_id}/folders/{folder_id}/children`, header
  * `api-version: experimental`, response
  * `{ data: [{ id, name, created_at, type, view_url, ... }], links: { next? } }`.
- * There is no server-side "created after" filter, so we request
- * `sort=created_at_desc` and paginate via `links.next`.
+ * This must be `/children`, not the sibling `/files` endpoint — confirmed by
+ * direct testing that `/files` returns ONLY file entries (never folders),
+ * so a folder containing nothing but subfolders (the common case: an editor
+ * organizes every cut into a dated or per-client subfolder, with nothing
+ * loose at the root) looks completely empty through `/files` and the
+ * traversal below would never discover anything to recurse into. There is
+ * no server-side "created after" filter, so we request `sort=created_at_desc`
+ * and paginate via `links.next`.
  *
  * Folder discovery and file collection are deliberately decoupled: a
  * subfolder can be created long before the files inside it, so folders
@@ -202,7 +209,7 @@ async function fetchFolderFiles(
   let pagesFetched = 0;
 
   let pageUrl: string | null =
-    `${FRAMEIO_API_BASE}/accounts/${accountId}/folders/${folderId}/files?sort=created_at_desc`;
+    `${FRAMEIO_API_BASE}/accounts/${accountId}/folders/${folderId}/children?sort=created_at_desc`;
 
   while (pageUrl) {
     if (pagesFetched >= MAX_PAGES_PER_FOLDER) {

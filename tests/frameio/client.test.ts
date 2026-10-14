@@ -67,7 +67,7 @@ test("listNewFiles resolves the token and root folder, and hits the real V4 endp
     if (url === `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/projects/${PROJECT_ID}`) {
       return projectResponse("root-folder-1");
     }
-    if (url.startsWith(`https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files`)) {
+    if (url.startsWith(`https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/children`)) {
       return jsonResponse({
         data: [
           {
@@ -108,8 +108,8 @@ test("listNewFiles resolves the token and root folder, and hits the real V4 endp
 
 test("listNewFiles paginates via links.next past the file cutoff, filtering the final result precisely", async () => {
   const sinceISO = "2026-01-01T00:00:00.000Z";
-  const filesPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?sort=created_at_desc`;
-  const nextPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?sort=created_at_desc&page=2`;
+  const filesPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/children?sort=created_at_desc`;
+  const nextPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/children?sort=created_at_desc&page=2`;
 
   const fetchMock = vi.fn(async (input: string | URL) => {
     const url = input.toString();
@@ -154,8 +154,8 @@ test("listNewFiles discovers a subfolder on a later page even though page 1's ol
   // not by their newest file) was never discovered, and a video uploaded
   // into it later would never be seen by any future poll either.
   const sinceISO = "2026-01-10T00:00:00.000Z";
-  const filesPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?sort=created_at_desc`;
-  const nextPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?sort=created_at_desc&page=2`;
+  const filesPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/children?sort=created_at_desc`;
+  const nextPageUrl = `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/children?sort=created_at_desc&page=2`;
 
   const fetchMock = vi.fn(async (input: string | URL) => {
     const url = input.toString();
@@ -184,7 +184,7 @@ test("listNewFiles discovers a subfolder on a later page even though page 1's ol
         links: {},
       });
     }
-    if (url.includes("/folders/old-subfolder/files")) {
+    if (url.includes("/folders/old-subfolder/children")) {
       return jsonResponse({
         data: [
           { id: "f-in-subfolder", name: "Cut (Lovelots).mp4", created_at: "2026-01-11T00:00:00.000Z", type: "file", view_url: null },
@@ -210,7 +210,7 @@ test("listNewFiles recurses into type:'folder' entries to find files in subfolde
     if (url.includes("/projects/")) {
       return projectResponse("root-folder-1");
     }
-    if (url.includes("/folders/root-folder-1/files")) {
+    if (url.includes("/folders/root-folder-1/children")) {
       return jsonResponse({
         data: [
           { id: "subfolder-1", name: "Subfolder", created_at: "2026-01-05T00:00:00.000Z", type: "folder" },
@@ -219,7 +219,7 @@ test("listNewFiles recurses into type:'folder' entries to find files in subfolde
         links: {},
       });
     }
-    if (url.includes("/folders/subfolder-1/files")) {
+    if (url.includes("/folders/subfolder-1/children")) {
       return jsonResponse({
         data: [
           { id: "f-sub", name: "Cut (ARC).mp4", created_at: "2026-01-03T00:00:00.000Z", type: "file", view_url: null },
@@ -250,7 +250,7 @@ test("listNewFiles caps traversal at MAX_FOLDER_DEPTH (5), never fetching a 7th-
     if (url.includes("/projects/")) {
       return projectResponse("f0");
     }
-    const match = url.match(/\/folders\/(f\d+)\/files/);
+    const match = url.match(/\/folders\/(f\d+)\/children/);
     if (!match) {
       throw new Error(`Unexpected fetch: ${url}`);
     }
@@ -269,7 +269,7 @@ test("listNewFiles caps traversal at MAX_FOLDER_DEPTH (5), never fetching a 7th-
   const result = await listNewFiles(sinceISO);
 
   const fetchedFolderIds = fetchMock.mock.calls
-    .map((c) => c[0].toString().match(/\/folders\/(f\d+)\/files/)?.[1])
+    .map((c) => c[0].toString().match(/\/folders\/(f\d+)\/children/)?.[1])
     .filter((id): id is string => Boolean(id));
 
   expect(fetchedFolderIds.sort()).toEqual(["f0", "f1", "f2", "f3", "f4", "f5"]);
@@ -295,7 +295,7 @@ test("listNewFiles reports truncated and warns when MAX_FOLDERS_VISITED is hit",
     if (url.includes("/projects/")) {
       return projectResponse("root-folder-1");
     }
-    if (url.includes("/folders/root-folder-1/files")) {
+    if (url.includes("/folders/root-folder-1/children")) {
       return jsonResponse({
         data: Array.from({ length: 60 }, (_, i) => ({
           id: `sub-${i}`,
@@ -306,7 +306,7 @@ test("listNewFiles reports truncated and warns when MAX_FOLDERS_VISITED is hit",
         links: {},
       });
     }
-    const match = url.match(/\/folders\/(sub-\d+)\/files/);
+    const match = url.match(/\/folders\/(sub-\d+)\/children/);
     if (match) {
       return jsonResponse({ data: [], links: {} });
     }
@@ -321,7 +321,7 @@ test("listNewFiles reports truncated and warns when MAX_FOLDERS_VISITED is hit",
 
   // root + 49 subfolders = 50 total folders visited (MAX_FOLDERS_VISITED).
   const visitedSubfolders = fetchMock.mock.calls
-    .map((c) => c[0].toString().match(/\/folders\/(sub-\d+)\/files/)?.[1])
+    .map((c) => c[0].toString().match(/\/folders\/(sub-\d+)\/children/)?.[1])
     .filter((id): id is string => Boolean(id));
   expect(visitedSubfolders).toHaveLength(49);
 
@@ -341,13 +341,13 @@ test("listNewFiles caps pagination at MAX_PAGES_PER_FOLDER for a single folder a
     if (url.includes("/projects/")) {
       return projectResponse("root-folder-1");
     }
-    if (url.includes("/folders/root-folder-1/files")) {
+    if (url.includes("/folders/root-folder-1/children")) {
       pageCount++;
       return jsonResponse({
         data: [
           { id: `f-page-${pageCount}`, name: "a.mp4", created_at: "2026-01-01T00:00:00.000Z", type: "file", view_url: null },
         ],
-        links: { next: `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/files?page=${pageCount + 1}` },
+        links: { next: `https://api.frame.io/v4/accounts/${ACCOUNT_ID}/folders/root-folder-1/children?page=${pageCount + 1}` },
       });
     }
     throw new Error(`Unexpected fetch: ${url}`);
