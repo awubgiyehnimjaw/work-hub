@@ -77,6 +77,10 @@ too.
 | `FRAMEIO_ACCOUNT_ID` | The Frame.io account that project belongs to (used to build the V4 API path `/v4/accounts/{FRAMEIO_ACCOUNT_ID}/...` in `lib/frameio/client.ts`). Same source as `FRAMEIO_PROJECT_ID` — visible in the account's URL/settings in the Frame.io web app, or via the V4 API. |
 | `GOOGLE_CLIENT_ID` | The Client ID of a Google Cloud Console OAuth 2.0 Client (type "Web application") — see §3.2. |
 | `GOOGLE_CLIENT_SECRET` | The Client Secret from that same Google Cloud Console OAuth client. |
+| `TELEGRAM_BOT_TOKEN` | The bot token from @BotFather — see §6.1. |
+| `TELEGRAM_WEBHOOK_SECRET` | Any long random string (e.g. `openssl rand -hex 32`). Checked against the `X-Telegram-Bot-Api-Secret-Token` header on every webhook call (`lib/telegram/webhook-auth.ts`) — same bearer-secret shape as `CRON_SECRET`. Must be set to the **exact same value** passed as `secret_token` when registering the webhook in §6.1. |
+| `TELEGRAM_ALLOWED_CHAT_ID` | Callum's own numeric Telegram chat id — see §6.1. A message from any other chat is fully ignored. |
+| `OPENAI_API_KEY` | An API key from [platform.openai.com](https://platform.openai.com) — used for voice transcription and structured message parsing (`lib/openai/client.ts`). |
 
 After setting these, trigger a redeploy (Vercel → Deployments → ⋯ →
 Redeploy) — env var changes don't apply retroactively to a deployment
@@ -224,7 +228,66 @@ A couple of GitHub Actions quirks worth knowing:
   activity for 60 days. If the cron jobs silently stop appearing in the
   Actions log, check Settings → Actions and re-enable the workflow.
 
-## 7. Verify end to end
+## 7. Connect the Telegram bot
+
+A voice or text message to this bot becomes a to-do or a client content
+idea, with a one-line confirmation reply either way (see
+`docs/superpowers/specs/2026-10-16-telegram-bot-content-ideas-design.md`
+for the full design). Do this together, in order:
+
+### 7.1 Create the bot and find the chat id
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, send
+   `/newbot`, and follow the prompts. BotFather replies with the bot
+   token — this is `TELEGRAM_BOT_TOKEN`.
+2. Find Callum's own numeric Telegram chat id — this is
+   `TELEGRAM_ALLOWED_CHAT_ID`, the only chat the webhook will act on.
+   Either message [@userinfobot](https://t.me/userinfobot) (it replies
+   with your id directly), or send the new bot any message and then
+   call `https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getUpdates` —
+   the `message.chat.id` in the response is it.
+3. Generate `TELEGRAM_WEBHOOK_SECRET` the same way as `CRON_SECRET`:
+   `openssl rand -hex 32`.
+
+### 7.2 Set env vars and deploy
+
+Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
+`TELEGRAM_ALLOWED_CHAT_ID`, and `OPENAI_API_KEY` in Vercel (§2), then
+redeploy.
+
+### 7.3 Register the webhook
+
+From your own machine, using the deployed domain from §1 (call it
+`<domain>`):
+
+```bash
+curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://<domain>/api/telegram/webhook", "secret_token": "<TELEGRAM_WEBHOOK_SECRET>"}'
+```
+
+A `{"ok":true,...}` response means Telegram will now call that URL on
+every message, sending `secret_token` back as the
+`X-Telegram-Bot-Api-Secret-Token` header — exactly what
+`lib/telegram/webhook-auth.ts` checks. Re-running this `curl` call later
+(e.g. after rotating the secret) safely overwrites the registered
+webhook rather than erroring.
+
+### 7.4 Rename "Ulti" to "Ultimate Intern"
+
+The content-ideas client roster assumes the existing "Ulti" client is
+displayed as "Ultimate Intern". As part of this same setup pass, open
+the already-shipped `/clients` page, edit that client, and change its
+display name — no redeploy needed, this is a live data edit.
+
+### 7.5 Try it
+
+Send the bot a text message like "to do, test the new bot" and confirm
+it replies and the to-do shows up on the dashboard; then try "content
+idea for ARC, a test idea" and confirm it shows up on `/content-ideas`
+under ARC. Try a voice note too.
+
+## 8. Verify end to end
 
 1. Actions tab → confirm recent runs of both `poll-frameio` and
    `fetch-calendar` jobs are green. A red run's log will show the `curl`
