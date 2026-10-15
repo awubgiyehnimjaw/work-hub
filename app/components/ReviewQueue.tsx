@@ -34,6 +34,8 @@ function tomorrowMorning(): Date {
 export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueueProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [errorId, setErrorId] = useState<string | null>(null);
+  const [customSnoozeId, setCustomSnoozeId] = useState<string | null>(null);
+  const [customSnoozeValue, setCustomSnoozeValue] = useState("");
 
   async function handleComplete(id: string) {
     setBusyId(id);
@@ -57,6 +59,21 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
     } finally {
       setBusyId(null);
     }
+  }
+
+  function openCustomSnooze(id: string) {
+    setCustomSnoozeId(id);
+    setCustomSnoozeValue("");
+    setErrorId(null);
+  }
+
+  async function handleCustomSnooze(id: string) {
+    const until = customSnoozeValue ? new Date(customSnoozeValue) : null;
+    if (!until || Number.isNaN(until.getTime())) {
+      return;
+    }
+    await handleSnooze(id, until);
+    setCustomSnoozeId(null);
   }
 
   return (
@@ -201,7 +218,79 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                   >
                     Tomorrow morning
                   </button>
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => openCustomSnooze(task.id)}
+                    className="interactive"
+                    style={{
+                      backgroundColor: "var(--color-surface-muted)",
+                      color: "var(--color-text)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      fontSize: 14,
+                      fontWeight: 600,
+                      opacity: isBusy ? 0.6 : 1,
+                    }}
+                  >
+                    Snooze until…
+                  </button>
                 </div>
+
+                {customSnoozeId === task.id ? (
+                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                    <input
+                      type="datetime-local"
+                      value={customSnoozeValue}
+                      onChange={(event) => setCustomSnoozeValue(event.target.value)}
+                      aria-label="Snooze until"
+                      autoFocus
+                      style={{
+                        flex: 1,
+                        padding: "8px 10px",
+                        fontSize: 13,
+                        borderRadius: 8,
+                        border: "1px solid var(--color-border)",
+                        backgroundColor: "var(--color-surface)",
+                        color: "var(--color-text)",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={isBusy || customSnoozeValue.length === 0}
+                      onClick={() => handleCustomSnooze(task.id)}
+                      className="interactive"
+                      style={{
+                        backgroundColor: "var(--color-primary)",
+                        color: "var(--color-primary-text)",
+                        border: "none",
+                        borderRadius: 8,
+                        padding: "8px 12px",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        opacity: isBusy || customSnoozeValue.length === 0 ? 0.6 : 1,
+                      }}
+                    >
+                      Set
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustomSnoozeId(null)}
+                      className="interactive"
+                      style={{
+                        backgroundColor: "var(--color-surface-muted)",
+                        color: "var(--color-text)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 8,
+                        padding: "8px 12px",
+                        fontSize: 13,
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : null}
 
                 {errorId === task.id ? (
                   <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13, margin: "8px 0 0" }}>

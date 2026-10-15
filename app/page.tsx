@@ -106,9 +106,12 @@ export default function HomePage() {
 
   return (
     <main style={{ maxWidth: 560, margin: "0 auto", padding: 20, fontFamily: "inherit" }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "8px 0 28px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, margin: "8px 0 28px" }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, margin: 0, letterSpacing: -0.3 }}>Work Hub</h1>
-        <div style={{ display: "flex", gap: 14 }}>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          <a href="/clients" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
+            Clients →
+          </a>
           <a href="/suggestions" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
             Suggestions →
           </a>
