@@ -112,6 +112,9 @@ export default function HomePage() {
           <a href="/clients" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
             Clients →
           </a>
+          <a href="/content-ideas" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
+            Ideas →
+          </a>
           <a href="/suggestions" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
             Suggestions →
           </a>
