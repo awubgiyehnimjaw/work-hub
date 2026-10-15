@@ -3,7 +3,7 @@ import { GET, POST } from "@/app/api/clients/all/route";
 import { DELETE, PATCH } from "@/app/api/clients/[id]/route";
 import { GET as GET_STATS } from "@/app/api/clients/stats/route";
 import { db } from "@/lib/db/client";
-import { clients, tasks } from "@/lib/db/schema";
+import { clients, contentIdeas, tasks } from "@/lib/db/schema";
 
 function postRequest(body: unknown) {
   return new Request("http://localhost/api/clients/all", {
@@ -29,6 +29,7 @@ const NONEXISTENT_ID = "00000000-0000-0000-0000-000000000000";
 
 beforeEach(async () => {
   await db.delete(tasks);
+  await db.delete(contentIdeas);
   await db.delete(clients);
 });
 
@@ -146,6 +147,20 @@ test("DELETE /api/clients/:id returns 409 instead of crashing when the client st
     clientId: row.id,
     status: "active",
   });
+
+  const res = await DELETE(new Request("http://localhost"), context(row.id));
+  expect(res.status).toBe(409);
+
+  const rows = await db.select().from(clients);
+  expect(rows).toHaveLength(1);
+});
+
+test("DELETE /api/clients/:id returns 409 instead of crashing when the client still has content ideas", async () => {
+  const [row] = await db
+    .insert(clients)
+    .values({ tag: "idea-haver", displayName: "Idea Co", recognized: true, lastActivityAt: null })
+    .returning();
+  await db.insert(contentIdeas).values({ clientId: row.id, text: "an idea" });
 
   const res = await DELETE(new Request("http://localhost"), context(row.id));
   expect(res.status).toBe(409);

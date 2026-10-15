@@ -99,9 +99,12 @@ export async function DELETE(
     }
     return NextResponse.json({ status: "ok" }, { status: 200 });
   } catch (error) {
-    if (isForeignKeyViolation(error, "tasks_client_id_clients_id_fk")) {
+    if (
+      isForeignKeyViolation(error, "tasks_client_id_clients_id_fk") ||
+      isForeignKeyViolation(error, "content_ideas_client_id_clients_id_fk")
+    ) {
       return NextResponse.json(
-        { error: "Can't delete — this client has existing review tasks" },
+        { error: "Can't delete — this client has existing review tasks or content ideas" },
         { status: 409 },
       );
     }
