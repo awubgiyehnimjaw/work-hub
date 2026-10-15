@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { clients, tasks } from "@/lib/db/schema";
 import { isTaskStale } from "@/lib/tasks/aging";
+import { createTodo } from "@/lib/tasks/create-todo";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -129,10 +130,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const [task] = await db
-    .insert(tasks)
-    .values({ type: "todo", title: payload.title, status: "active", dueAt: payload.dueAt })
-    .returning();
+  const task = await createTodo({ title: payload.title, dueAt: payload.dueAt });
 
   return NextResponse.json(task, { status: 201 });
 }
