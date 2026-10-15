@@ -121,20 +121,21 @@ export default function HistoryPage() {
   }
 
   return (
-    <main style={{ maxWidth: 480, margin: "0 auto", padding: 16, fontFamily: "system-ui, sans-serif" }}>
-      <a href="/" style={{ fontSize: 14, color: "#6b7280", textDecoration: "none" }}>
+    <main style={{ maxWidth: 560, margin: "0 auto", padding: 20, fontFamily: "inherit" }}>
+      <a href="/" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
         ← Dashboard
       </a>
-      <h1 style={{ fontSize: 22, fontWeight: 800, margin: "8px 0 24px" }}>History</h1>
+      <h1 style={{ fontSize: 23, fontWeight: 800, margin: "8px 0 28px", letterSpacing: -0.3 }}>History</h1>
 
-      {state === "loading" ? <p style={{ color: "#6b7280" }}>Loading…</p> : null}
+      {state === "loading" ? <p style={{ color: "var(--color-text-muted)" }}>Loading…</p> : null}
       {state === "error" ? (
-        <p role="alert" style={{ color: "#b42318" }}>
+        <p role="alert" style={{ color: "var(--color-danger)" }}>
           Couldn&apos;t load history.{" "}
           <button
             type="button"
             onClick={loadHistory}
-            style={{ color: "#b42318", textDecoration: "underline", background: "none", border: "none", padding: 0, font: "inherit", cursor: "pointer" }}
+            className="interactive"
+            style={{ color: "var(--color-danger)", textDecoration: "underline", background: "none", border: "none", padding: 0, font: "inherit" }}
           >
             Try again
           </button>
@@ -142,7 +143,7 @@ export default function HistoryPage() {
       ) : null}
 
       {state === "ready" && groups.length === 0 ? (
-        <p style={{ color: "#6b7280" }}>No completed reviews yet.</p>
+        <p style={{ color: "var(--color-text-muted)" }}>No completed reviews yet.</p>
       ) : null}
 
       {state === "ready" && groups.length > 0 ? (
@@ -151,7 +152,7 @@ export default function HistoryPage() {
             <section key={group.clientId ?? "unrecognized"}>
               <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 12px" }}>
                 {group.clientName}{" "}
-                <span style={{ fontSize: 13, fontWeight: 500, color: "#6b7280" }}>
+                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-muted)" }}>
                   ({group.tasks.length} completed)
                 </span>
               </h2>
@@ -160,10 +161,11 @@ export default function HistoryPage() {
                   <li
                     key={task.id}
                     style={{
-                      border: "1px solid #e5e7eb",
+                      border: "1px solid var(--color-border)",
                       borderRadius: 10,
                       padding: "10px 12px",
-                      backgroundColor: "#ffffff",
+                      backgroundColor: "var(--color-surface)",
+                      boxShadow: "var(--shadow-card)",
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
@@ -172,33 +174,33 @@ export default function HistoryPage() {
                           ? <>Review — &quot;{task.sourceFileName}&quot;</>
                           : task.title}
                       </span>
-                      <span style={{ fontSize: 13, color: "#6b7280", whiteSpace: "nowrap" }}>
+                      <span style={{ fontSize: 13, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>
                         {formatCompletedAt(task.completedAt)}
                       </span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 6 }}>
-                      <span style={{ fontSize: 13, color: "#6b7280" }}>
+                      <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
                         Client — {group.clientName}
                       </span>
                       <button
                         type="button"
                         onClick={() => handleReopen(task.id)}
                         disabled={reopeningId === task.id}
+                        className="interactive"
                         style={{
                           fontSize: 13,
-                          color: "#374151",
-                          background: "#f3f4f6",
-                          border: "1px solid #d1d5db",
+                          color: "var(--color-text)",
+                          background: "var(--color-surface-muted)",
+                          border: "1px solid var(--color-border)",
                           borderRadius: 6,
                           padding: "4px 10px",
-                          cursor: reopeningId === task.id ? "default" : "pointer",
                         }}
                       >
                         {reopeningId === task.id ? "Undoing…" : "Undo"}
                       </button>
                     </div>
                     {reopenErrorId === task.id ? (
-                      <p role="alert" style={{ margin: "6px 0 0", fontSize: 13, color: "#b42318" }}>
+                      <p role="alert" style={{ margin: "6px 0 0", fontSize: 13, color: "var(--color-danger)" }}>
                         Couldn&apos;t undo — try again.
                       </p>
                     ) : null}

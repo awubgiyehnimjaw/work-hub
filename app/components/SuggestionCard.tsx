@@ -53,17 +53,18 @@ export default function SuggestionCard() {
   return (
     <section
       style={{
-        border: "1px solid #c7d2fe",
-        backgroundColor: "#eef2ff",
+        border: "1px solid var(--color-accent-border)",
+        backgroundColor: "var(--color-accent-bg)",
         borderRadius: 10,
         padding: 16,
+        boxShadow: "var(--shadow-card)",
       }}
     >
-      <h2 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 8px", color: "#3730a3" }}>
+      <h2 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 8px", color: "var(--color-accent-text)" }}>
         {state === "error" ? "Growth idea" : "Also worth doing"}
       </h2>
       {state === "error" ? (
-        <p role="alert" style={{ margin: 0, color: "#b42318" }}>
+        <p role="alert" style={{ margin: 0, color: "var(--color-danger)" }}>
           Couldn&apos;t load a suggestion right now.
         </p>
       ) : (

@@ -62,9 +62,10 @@ export default function QuickAddButton({ onAdd }: QuickAddButtonProps) {
       <button
         type="button"
         onClick={openInput}
+        className="interactive"
         style={{
-          backgroundColor: "#111827",
-          color: "#ffffff",
+          backgroundColor: "var(--color-primary)",
+          color: "var(--color-primary-text)",
           border: "none",
           borderRadius: 8,
           padding: "10px 14px",
@@ -94,15 +95,18 @@ export default function QuickAddButton({ onAdd }: QuickAddButtonProps) {
             padding: "10px 12px",
             fontSize: 14,
             borderRadius: 8,
-            border: "1px solid #d1d5db",
+            border: "1px solid var(--color-border)",
+            backgroundColor: "var(--color-surface)",
+            color: "var(--color-text)",
           }}
         />
         <button
           type="submit"
           disabled={submitting || title.trim().length === 0}
+          className="interactive"
           style={{
-            backgroundColor: "#111827",
-            color: "#ffffff",
+            backgroundColor: "var(--color-primary)",
+            color: "var(--color-primary-text)",
             border: "none",
             borderRadius: 8,
             padding: "10px 14px",
@@ -117,10 +121,11 @@ export default function QuickAddButton({ onAdd }: QuickAddButtonProps) {
           type="button"
           onClick={closeInput}
           aria-label="Cancel"
+          className="interactive"
           style={{
-            backgroundColor: "#f3f4f6",
-            color: "#111827",
-            border: "1px solid #d1d5db",
+            backgroundColor: "var(--color-surface-muted)",
+            color: "var(--color-text)",
+            border: "1px solid var(--color-border)",
             borderRadius: 8,
             padding: "10px 12px",
             fontSize: 14,
@@ -139,13 +144,14 @@ export default function QuickAddButton({ onAdd }: QuickAddButtonProps) {
           padding: "8px 10px",
           fontSize: 13,
           borderRadius: 8,
-          border: "1px solid #d1d5db",
-          color: dueAt ? "#111827" : "#9ca3af",
+          border: "1px solid var(--color-border)",
+          backgroundColor: "var(--color-surface)",
+          color: dueAt ? "var(--color-text)" : "var(--color-text-subtle)",
           width: "100%",
         }}
       />
       {error ? (
-        <p role="alert" style={{ color: "#b42318", fontSize: 13, margin: 0 }}>
+        <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13, margin: 0 }}>
           {error}
         </p>
       ) : null}

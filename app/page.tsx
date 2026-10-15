@@ -105,31 +105,32 @@ export default function HomePage() {
   const showSuggestion = state === "ready";
 
   return (
-    <main style={{ maxWidth: 480, margin: "0 auto", padding: 16, fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "8px 0 24px" }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>Work Hub</h1>
-        <div style={{ display: "flex", gap: 12 }}>
-          <a href="/suggestions" style={{ fontSize: 14, color: "#6b7280", textDecoration: "none" }}>
+    <main style={{ maxWidth: 560, margin: "0 auto", padding: 20, fontFamily: "inherit" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "8px 0 28px" }}>
+        <h1 style={{ fontSize: 23, fontWeight: 800, margin: 0, letterSpacing: -0.3 }}>Work Hub</h1>
+        <div style={{ display: "flex", gap: 14 }}>
+          <a href="/suggestions" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
             Suggestions →
           </a>
-          <a href="/history" style={{ fontSize: 14, color: "#6b7280", textDecoration: "none" }}>
+          <a href="/history" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
             History →
           </a>
         </div>
       </div>
 
-      <div style={{ marginBottom: 24 }}>
+      <div style={{ marginBottom: 28 }}>
         <EnableNotificationsButton />
       </div>
 
-      {state === "loading" ? <p style={{ color: "#6b7280" }}>Loading…</p> : null}
+      {state === "loading" ? <p style={{ color: "var(--color-text-muted)" }}>Loading…</p> : null}
       {state === "error" ? (
-        <p role="alert" style={{ color: "#b42318" }}>
+        <p role="alert" style={{ color: "var(--color-danger)" }}>
           Couldn&apos;t load your dashboard.{" "}
           <button
             type="button"
             onClick={loadTasks}
-            style={{ color: "#b42318", textDecoration: "underline", background: "none", border: "none", padding: 0, font: "inherit", cursor: "pointer" }}
+            className="interactive"
+            style={{ color: "var(--color-danger)", textDecoration: "underline", background: "none", border: "none", padding: 0, font: "inherit" }}
           >
             Try again
           </button>

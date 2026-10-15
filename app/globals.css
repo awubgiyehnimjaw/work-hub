@@ -1,0 +1,101 @@
+:root {
+  --color-bg: #f7f7f9;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f3f4f6;
+  --color-border: #e5e7eb;
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+  --color-text-subtle: #9ca3af;
+  --color-primary: #4f46e5;
+  --color-primary-hover: #4338ca;
+  --color-primary-text: #ffffff;
+  --color-danger: #b42318;
+  --color-danger-bg: #fef2f1;
+  --color-danger-border: #f3b4ab;
+  --color-success: #16a34a;
+  --color-success-hover: #15803d;
+  --color-warning: #92400e;
+  --color-accent-bg: #eef2ff;
+  --color-accent-border: #c7d2fe;
+  --color-accent-text: #3730a3;
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.08);
+  --shadow-card-hover: 0 2px 4px rgba(16, 24, 40, 0.06), 0 4px 10px rgba(16, 24, 40, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0b0f17;
+    --color-surface: #161b24;
+    --color-surface-muted: #1f2531;
+    --color-border: #2a313f;
+    --color-text: #f3f4f6;
+    --color-text-muted: #9ca3af;
+    --color-text-subtle: #6b7280;
+    --color-primary: #6366f1;
+    --color-primary-hover: #818cf8;
+    --color-primary-text: #ffffff;
+    --color-danger: #f87171;
+    --color-danger-bg: rgba(248, 113, 113, 0.12);
+    --color-danger-border: rgba(248, 113, 113, 0.4);
+    --color-success: #4ade80;
+    --color-success-hover: #86efac;
+    --color-warning: #fbbf24;
+    --color-accent-bg: rgba(99, 102, 241, 0.14);
+    --color-accent-border: rgba(99, 102, 241, 0.35);
+    --color-accent-text: #a5b4fc;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-card-hover: 0 4px 10px rgba(0, 0, 0, 0.45);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Shared tactile feedback for every button/CTA-link across the app —
+   added via className since React inline styles can't express :hover. */
+.interactive {
+  transition: filter 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
+  cursor: pointer;
+}
+.interactive:hover {
+  filter: brightness(1.07);
+}
+.interactive:active {
+  transform: scale(0.97);
+}
+.interactive:disabled {
+  cursor: default;
+}
+.interactive:disabled:hover {
+  filter: none;
+}

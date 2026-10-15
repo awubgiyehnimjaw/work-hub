@@ -31,7 +31,9 @@ const inputStyle = {
   padding: "8px 10px",
   fontSize: 14,
   borderRadius: 8,
-  border: "1px solid #d1d5db",
+  border: "1px solid var(--color-border)",
+  backgroundColor: "var(--color-surface)",
+  color: "var(--color-text)",
 };
 
 export default function SuggestionsPage() {
@@ -178,11 +180,11 @@ export default function SuggestionsPage() {
   const groups = groupByCategory(suggestions);
 
   return (
-    <main style={{ maxWidth: 480, margin: "0 auto", padding: 16, fontFamily: "system-ui, sans-serif" }}>
-      <a href="/" style={{ fontSize: 14, color: "#6b7280", textDecoration: "none" }}>
+    <main style={{ maxWidth: 560, margin: "0 auto", padding: 20, fontFamily: "inherit" }}>
+      <a href="/" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
         ← Dashboard
       </a>
-      <h1 style={{ fontSize: 22, fontWeight: 800, margin: "8px 0 24px" }}>Suggestions</h1>
+      <h1 style={{ fontSize: 23, fontWeight: 800, margin: "8px 0 28px", letterSpacing: -0.3 }}>Suggestions</h1>
 
       <form
         onSubmit={handleAdd}
@@ -190,10 +192,12 @@ export default function SuggestionsPage() {
           display: "flex",
           flexDirection: "column",
           gap: 8,
-          border: "1px solid #e5e7eb",
+          border: "1px solid var(--color-border)",
           borderRadius: 10,
           padding: 12,
           marginBottom: 24,
+          backgroundColor: "var(--color-surface)",
+          boxShadow: "var(--shadow-card)",
         }}
       >
         <input
@@ -220,9 +224,10 @@ export default function SuggestionsPage() {
           <button
             type="submit"
             disabled={adding || newText.trim().length === 0}
+            className="interactive"
             style={{
-              backgroundColor: "#111827",
-              color: "#ffffff",
+              backgroundColor: "var(--color-primary)",
+              color: "var(--color-primary-text)",
               border: "none",
               borderRadius: 8,
               padding: "8px 14px",
@@ -235,20 +240,21 @@ export default function SuggestionsPage() {
           </button>
         </div>
         {addError ? (
-          <p role="alert" style={{ color: "#b42318", fontSize: 13, margin: 0 }}>
+          <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13, margin: 0 }}>
             {addError}
           </p>
         ) : null}
       </form>
 
-      {state === "loading" ? <p style={{ color: "#6b7280" }}>Loading…</p> : null}
+      {state === "loading" ? <p style={{ color: "var(--color-text-muted)" }}>Loading…</p> : null}
       {state === "error" ? (
-        <p role="alert" style={{ color: "#b42318" }}>
+        <p role="alert" style={{ color: "var(--color-danger)" }}>
           Couldn&apos;t load suggestions.{" "}
           <button
             type="button"
             onClick={load}
-            style={{ color: "#b42318", textDecoration: "underline", background: "none", border: "none", padding: 0, font: "inherit", cursor: "pointer" }}
+            className="interactive"
+            style={{ color: "var(--color-danger)", textDecoration: "underline", background: "none", border: "none", padding: 0, font: "inherit" }}
           >
             Try again
           </button>
@@ -256,14 +262,14 @@ export default function SuggestionsPage() {
       ) : null}
 
       {state === "ready" && groups.length === 0 ? (
-        <p style={{ color: "#6b7280" }}>No suggestions yet — add one above.</p>
+        <p style={{ color: "var(--color-text-muted)" }}>No suggestions yet — add one above.</p>
       ) : null}
 
       {state === "ready" && groups.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           {groups.map((group) => (
             <section key={group.category}>
-              <h2 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 8px", color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.4 }}>
+              <h2 style={{ fontSize: 14, fontWeight: 700, margin: "0 0 8px", color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>
                 {CATEGORY_LABELS[group.category]}
               </h2>
               <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -271,10 +277,11 @@ export default function SuggestionsPage() {
                   <li
                     key={suggestion.id}
                     style={{
-                      border: "1px solid #e5e7eb",
+                      border: "1px solid var(--color-border)",
                       borderRadius: 10,
                       padding: "10px 12px",
-                      backgroundColor: suggestion.active ? "#ffffff" : "#f9fafb",
+                      backgroundColor: suggestion.active ? "var(--color-surface)" : "var(--color-surface-muted)",
+                      boxShadow: suggestion.active ? "var(--shadow-card)" : "none",
                       opacity: suggestion.active ? 1 : 0.65,
                     }}
                   >
@@ -303,9 +310,10 @@ export default function SuggestionsPage() {
                             type="button"
                             onClick={() => saveEdit(suggestion.id)}
                             disabled={savingId === suggestion.id || editText.trim().length === 0}
+                            className="interactive"
                             style={{
-                              backgroundColor: "#111827",
-                              color: "#ffffff",
+                              backgroundColor: "var(--color-primary)",
+                              color: "var(--color-primary-text)",
                               border: "none",
                               borderRadius: 8,
                               padding: "8px 12px",
@@ -319,10 +327,11 @@ export default function SuggestionsPage() {
                             type="button"
                             onClick={cancelEdit}
                             disabled={savingId === suggestion.id}
+                            className="interactive"
                             style={{
-                              backgroundColor: "#f3f4f6",
-                              color: "#111827",
-                              border: "1px solid #d1d5db",
+                              backgroundColor: "var(--color-surface-muted)",
+                              color: "var(--color-text)",
+                              border: "1px solid var(--color-border)",
                               borderRadius: 8,
                               padding: "8px 12px",
                               fontSize: 13,
@@ -341,14 +350,14 @@ export default function SuggestionsPage() {
                             onClick={() => toggleActive(suggestion)}
                             disabled={savingId === suggestion.id}
                             title={suggestion.active ? "Deactivate" : "Activate"}
+                            className="interactive"
                             style={{
                               fontSize: 13,
-                              color: "#374151",
-                              background: "#f3f4f6",
-                              border: "1px solid #d1d5db",
+                              color: "var(--color-text)",
+                              background: "var(--color-surface-muted)",
+                              border: "1px solid var(--color-border)",
                               borderRadius: 6,
                               padding: "4px 8px",
-                              cursor: savingId === suggestion.id ? "default" : "pointer",
                             }}
                           >
                             {suggestion.active ? "On" : "Off"}
@@ -357,14 +366,14 @@ export default function SuggestionsPage() {
                             type="button"
                             onClick={() => startEdit(suggestion)}
                             disabled={savingId === suggestion.id}
+                            className="interactive"
                             style={{
                               fontSize: 13,
-                              color: "#374151",
-                              background: "#f3f4f6",
-                              border: "1px solid #d1d5db",
+                              color: "var(--color-text)",
+                              background: "var(--color-surface-muted)",
+                              border: "1px solid var(--color-border)",
                               borderRadius: 6,
                               padding: "4px 8px",
-                              cursor: savingId === suggestion.id ? "default" : "pointer",
                             }}
                           >
                             Edit
@@ -374,14 +383,14 @@ export default function SuggestionsPage() {
                               type="button"
                               onClick={() => handleDelete(suggestion.id)}
                               disabled={savingId === suggestion.id}
+                              className="interactive"
                               style={{
                                 fontSize: 13,
                                 color: "#ffffff",
-                                background: "#b42318",
-                                border: "1px solid #b42318",
+                                background: "var(--color-danger)",
+                                border: "1px solid var(--color-danger)",
                                 borderRadius: 6,
                                 padding: "4px 8px",
-                                cursor: savingId === suggestion.id ? "default" : "pointer",
                               }}
                             >
                               Confirm?
@@ -391,14 +400,14 @@ export default function SuggestionsPage() {
                               type="button"
                               onClick={() => setConfirmDeleteId(suggestion.id)}
                               disabled={savingId === suggestion.id}
+                              className="interactive"
                               style={{
                                 fontSize: 13,
-                                color: "#b42318",
-                                background: "#f3f4f6",
-                                border: "1px solid #d1d5db",
+                                color: "var(--color-danger)",
+                                background: "var(--color-surface-muted)",
+                                border: "1px solid var(--color-border)",
                                 borderRadius: 6,
                                 padding: "4px 8px",
-                                cursor: savingId === suggestion.id ? "default" : "pointer",
                               }}
                             >
                               Delete
@@ -408,7 +417,7 @@ export default function SuggestionsPage() {
                       </div>
                     )}
                     {rowErrorId === suggestion.id ? (
-                      <p role="alert" style={{ margin: "6px 0 0", fontSize: 13, color: "#b42318" }}>
+                      <p role="alert" style={{ margin: "6px 0 0", fontSize: 13, color: "var(--color-danger)" }}>
                         Something went wrong — try again.
                       </p>
                     ) : null}

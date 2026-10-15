@@ -48,7 +48,7 @@ export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
       <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 12px" }}>To-dos</h2>
 
       {tasks.length === 0 ? (
-        <p style={{ color: "#6b7280", margin: "0 0 12px" }}>Nothing on your list.</p>
+        <p style={{ color: "var(--color-text-muted)", margin: "0 0 12px" }}>Nothing on your list.</p>
       ) : (
         <ul
           style={{
@@ -71,10 +71,11 @@ export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: 8,
-                  border: due?.overdue ? "1px solid #f3b4ab" : "1px solid #e5e7eb",
-                  backgroundColor: due?.overdue ? "#fef2f1" : "#ffffff",
+                  border: due?.overdue ? "1px solid var(--color-danger-border)" : "1px solid var(--color-border)",
+                  backgroundColor: due?.overdue ? "var(--color-danger-bg)" : "var(--color-surface)",
                   borderRadius: 10,
                   padding: "10px 12px",
+                  boxShadow: "var(--shadow-card)",
                 }}
               >
                 <div>
@@ -84,7 +85,7 @@ export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
                       style={{
                         fontSize: 12,
                         marginTop: 2,
-                        color: due.overdue ? "#b42318" : "#6b7280",
+                        color: due.overdue ? "var(--color-danger)" : "var(--color-text-muted)",
                         fontWeight: due.overdue ? 600 : 400,
                       }}
                     >
@@ -98,10 +99,11 @@ export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
                   disabled={isBusy}
                   onClick={() => handleComplete(task.id)}
                   aria-label={`Mark "${task.title}" done`}
+                  className="interactive"
                   style={{
-                    backgroundColor: "#f3f4f6",
-                    color: "#111827",
-                    border: "1px solid #d1d5db",
+                    backgroundColor: "var(--color-surface-muted)",
+                    color: "var(--color-text)",
+                    border: "1px solid var(--color-border)",
                     borderRadius: 8,
                     padding: "6px 10px",
                     fontSize: 13,
@@ -113,7 +115,7 @@ export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
                   Done
                 </button>
                 {errorId === task.id ? (
-                  <span role="alert" style={{ color: "#b42318", fontSize: 12 }}>
+                  <span role="alert" style={{ color: "var(--color-danger)", fontSize: 12 }}>
                     Failed
                   </span>
                 ) : null}

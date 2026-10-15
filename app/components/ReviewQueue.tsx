@@ -64,7 +64,7 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
       <h2 style={{ fontSize: 20, fontWeight: 700, margin: "0 0 12px" }}>Needs your review</h2>
 
       {tasks.length === 0 ? (
-        <p style={{ color: "#6b7280", margin: 0 }}>You&apos;re caught up — no reviews waiting.</p>
+        <p style={{ color: "var(--color-text-muted)", margin: 0 }}>You&apos;re caught up — no reviews waiting.</p>
       ) : (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 12 }}>
           {tasks.map((task) => {
@@ -73,10 +73,11 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
               <li
                 key={task.id}
                 style={{
-                  border: task.isStale ? "1px solid #f3b4ab" : "1px solid #e5e7eb",
-                  backgroundColor: task.isStale ? "#fef2f1" : "#ffffff",
+                  border: task.isStale ? "1px solid var(--color-danger-border)" : "1px solid var(--color-border)",
+                  backgroundColor: task.isStale ? "var(--color-danger-bg)" : "var(--color-surface)",
                   borderRadius: 10,
                   padding: 14,
+                  boxShadow: "var(--shadow-card)",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
@@ -85,7 +86,7 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                       <div style={{ fontSize: 16, fontWeight: 700 }}>
                         Review — &quot;{task.sourceFileName}&quot;
                       </div>
-                      <div style={{ fontSize: 14, color: "#4b5563", marginTop: 2 }}>
+                      <div style={{ fontSize: 14, color: "var(--color-text-muted)", marginTop: 2 }}>
                         Client — {task.clientName ?? "Unrecognized"}
                       </div>
                     </div>
@@ -98,7 +99,7 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                         style={{
                           fontSize: 12,
                           fontWeight: 600,
-                          color: "#92400e",
+                          color: "var(--color-warning)",
                           whiteSpace: "nowrap",
                         }}
                       >
@@ -110,7 +111,7 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                         style={{
                           fontSize: 12,
                           fontWeight: 600,
-                          color: "#b42318",
+                          color: "var(--color-danger)",
                           whiteSpace: "nowrap",
                         }}
                       >
@@ -126,10 +127,11 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                       href={task.frameioUrl}
                       target="_blank"
                       rel="noopener noreferrer"
+                      className="interactive"
                       style={{
                         display: "inline-block",
-                        color: "#ffffff",
-                        backgroundColor: "#111827",
+                        color: "var(--color-primary-text)",
+                        backgroundColor: "var(--color-primary)",
                         borderRadius: 8,
                         padding: "8px 12px",
                         fontSize: 14,
@@ -140,7 +142,7 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                       Open in Frame.io
                     </a>
                   ) : (
-                    <span style={{ fontSize: 14, color: "#6b7280" }}>No Frame.io link</span>
+                    <span style={{ fontSize: 14, color: "var(--color-text-muted)" }}>No Frame.io link</span>
                   )}
                 </div>
 
@@ -149,8 +151,9 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                     type="button"
                     disabled={isBusy}
                     onClick={() => handleComplete(task.id)}
+                    className="interactive"
                     style={{
-                      backgroundColor: "#16a34a",
+                      backgroundColor: "var(--color-success)",
                       color: "#ffffff",
                       border: "none",
                       borderRadius: 8,
@@ -166,10 +169,11 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                     type="button"
                     disabled={isBusy}
                     onClick={() => handleSnooze(task.id, inTwoHours())}
+                    className="interactive"
                     style={{
-                      backgroundColor: "#f3f4f6",
-                      color: "#111827",
-                      border: "1px solid #d1d5db",
+                      backgroundColor: "var(--color-surface-muted)",
+                      color: "var(--color-text)",
+                      border: "1px solid var(--color-border)",
                       borderRadius: 8,
                       padding: "8px 12px",
                       fontSize: 14,
@@ -183,10 +187,11 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                     type="button"
                     disabled={isBusy}
                     onClick={() => handleSnooze(task.id, tomorrowMorning())}
+                    className="interactive"
                     style={{
-                      backgroundColor: "#f3f4f6",
-                      color: "#111827",
-                      border: "1px solid #d1d5db",
+                      backgroundColor: "var(--color-surface-muted)",
+                      color: "var(--color-text)",
+                      border: "1px solid var(--color-border)",
                       borderRadius: 8,
                       padding: "8px 12px",
                       fontSize: 14,
@@ -199,7 +204,7 @@ export default function ReviewQueue({ tasks, onComplete, onSnooze }: ReviewQueue
                 </div>
 
                 {errorId === task.id ? (
-                  <p role="alert" style={{ color: "#b42318", fontSize: 13, margin: "8px 0 0" }}>
+                  <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13, margin: "8px 0 0" }}>
                     Something went wrong — try again.
                   </p>
                 ) : null}

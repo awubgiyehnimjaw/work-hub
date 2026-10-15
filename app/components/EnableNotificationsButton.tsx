@@ -172,13 +172,13 @@ export default function EnableNotificationsButton() {
 
   if (state === "enabled") {
     return (
-      <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>Notifications enabled</p>
+      <p style={{ fontSize: 13, color: "var(--color-text-muted)", margin: 0 }}>Notifications enabled</p>
     );
   }
 
   if (state === "denied") {
     return (
-      <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
+      <p style={{ fontSize: 13, color: "var(--color-text-muted)", margin: 0 }}>
         Notifications blocked — enable them for this site in your browser settings.
       </p>
     );
@@ -190,9 +190,10 @@ export default function EnableNotificationsButton() {
         type="button"
         onClick={enableNotifications}
         disabled={state === "requesting"}
+        className="interactive"
         style={{
-          backgroundColor: "#111827",
-          color: "#ffffff",
+          backgroundColor: "var(--color-primary)",
+          color: "var(--color-primary-text)",
           border: "none",
           borderRadius: 8,
           padding: "10px 14px",
@@ -204,7 +205,7 @@ export default function EnableNotificationsButton() {
         {state === "requesting" ? "Enabling…" : "Enable notifications"}
       </button>
       {state === "error" ? (
-        <p role="alert" style={{ color: "#b42318", fontSize: 13, margin: "8px 0 0" }}>
+        <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13, margin: "8px 0 0" }}>
           Couldn&apos;t enable notifications — try again.
         </p>
       ) : null}

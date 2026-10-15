@@ -74,14 +74,14 @@ export default function CalendarAgenda() {
     <section style={{ marginBottom: 32 }}>
       <h2 style={{ fontSize: 18, fontWeight: 700, margin: "0 0 12px" }}>Next 14 days</h2>
 
-      {state === "loading" ? <p style={{ color: "#6b7280", margin: 0 }}>Loading calendar…</p> : null}
+      {state === "loading" ? <p style={{ color: "var(--color-text-muted)", margin: 0 }}>Loading calendar…</p> : null}
       {state === "error" ? (
-        <p role="alert" style={{ color: "#b42318", margin: 0 }}>
+        <p role="alert" style={{ color: "var(--color-danger)", margin: 0 }}>
           Couldn&apos;t load the calendar.
         </p>
       ) : null}
       {state === "ready" && events.length === 0 ? (
-        <p style={{ color: "#6b7280", margin: 0 }}>Nothing on the calendar for the next two weeks.</p>
+        <p style={{ color: "var(--color-text-muted)", margin: 0 }}>Nothing on the calendar for the next two weeks.</p>
       ) : null}
 
       {state === "ready" && events.length > 0 ? (
@@ -90,16 +90,17 @@ export default function CalendarAgenda() {
             <li
               key={event.id}
               style={{
-                border: "1px solid #e5e7eb",
+                border: "1px solid var(--color-border)",
                 borderRadius: 10,
                 padding: "10px 12px",
-                backgroundColor: "#ffffff",
+                backgroundColor: "var(--color-surface)",
+                boxShadow: "var(--shadow-card)",
               }}
             >
-              <div style={{ fontSize: 13, color: "#6b7280" }}>{formatEventTiming(event)}</div>
+              <div style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{formatEventTiming(event)}</div>
               <div style={{ fontSize: 15, fontWeight: 600 }}>{event.title}</div>
               {event.location ? (
-                <div style={{ fontSize: 13, color: "#6b7280" }}>{event.location}</div>
+                <div style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{event.location}</div>
               ) : null}
             </li>
           ))}
