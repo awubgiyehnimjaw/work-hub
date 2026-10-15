@@ -50,6 +50,13 @@ export const tasks = pgTable("tasks", {
   // (not just null-checked) so re-snoozing the same task again correctly
   // requires a fresh notification the next time that new snooze expires.
   snoozeNotifiedAt: timestamp("snooze_notified_at"),
+  // Optional due date for a to-do (never set on review tasks). Null means
+  // "no due date" — not every to-do needs one.
+  dueAt: timestamp("due_at"),
+  // Mirrors `snoozeNotifiedAt`'s pattern: set once a "this is due" push has
+  // been sent, so the reminder check (every 15 min) doesn't re-notify the
+  // same to-do every run after it becomes due.
+  dueNotifiedAt: timestamp("due_notified_at"),
 });
 
 export const suggestions = pgTable("suggestions", {
@@ -93,4 +100,8 @@ export const oauthTokens = pgTable("oauth_tokens", {
 export const syncState = pgTable("sync_state", {
   id: uuid("id").primaryKey().defaultRandom(),
   frameioLastPolledAt: timestamp("frameio_last_polled_at"),
+  // When the weekly digest push was last sent — checked against the
+  // current week so the digest fires at most once per week even though
+  // the reminder-check cron runs every 15 minutes.
+  weeklyDigestSentAt: timestamp("weekly_digest_sent_at"),
 });

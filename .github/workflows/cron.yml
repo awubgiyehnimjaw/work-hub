@@ -2,13 +2,15 @@ name: Scheduled cron calls
 
 # GitHub Actions is Work Hub's external scheduler (not Vercel's own cron,
 # to stay on free tiers — see docs/superpowers/plans/2026-10-13-work-hub-mvp.md
-# Global Constraints). This workflow calls the two protected `/api/cron/*`
+# Global Constraints). This workflow calls the three protected `/api/cron/*`
 # endpoints on the schedule the plan pins: poll-frameio every 5 minutes
 # (within the plan's required 2-5 minute range — see I2's note below on why
-# this isn't 3), fetch-calendar every 15 minutes. Both endpoints are gated
-# by `checkCronSecret` (lib/auth/cron-secret.ts), which checks an
+# this isn't 3), fetch-calendar and check-reminders every 15 minutes (the
+# latter handles due-to-do pushes and the once-weekly digest — see
+# lib/reminders/check.ts). All three endpoints are gated by
+# `checkCronSecret` (lib/auth/cron-secret.ts), which checks an
 # `Authorization: Bearer <token>` header against the deployed `CRON_SECRET`
-# env var — so both jobs below send that same secret, read from this repo's
+# env var — so all jobs below send that same secret, read from this repo's
 # `CRON_SECRET` Actions secret, which must be set to the exact same value
 # as the Vercel `CRON_SECRET` env var (see docs/superpowers/deploy-notes.md).
 #
@@ -56,3 +58,15 @@ jobs:
             --request GET \
             --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "${{ secrets.APP_BASE_URL }}/api/cron/fetch-calendar"
+
+  check-reminders:
+    name: Check due to-dos and weekly digest
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/check-reminders
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request GET \
+            --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_BASE_URL }}/api/cron/check-reminders"

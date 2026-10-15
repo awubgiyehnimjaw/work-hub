@@ -29,6 +29,13 @@
       "when": 1791997255625,
       "tag": "0003_add_task_source_file_name",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792051823173,
+      "tag": "0004_add_todo_due_dates_and_weekly_digest",
+      "breakpoints": true
     }
   ]
 }

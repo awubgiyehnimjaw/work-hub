@@ -6,12 +6,25 @@ import QuickAddButton from "./QuickAddButton";
 export interface TodoTask {
   id: string;
   title: string;
+  dueAt: string | null;
 }
 
 interface TodoListProps {
   tasks: TodoTask[];
-  onAdd: (title: string) => Promise<void>;
+  onAdd: (title: string, dueAt: Date | null) => Promise<void>;
   onComplete: (id: string) => Promise<void>;
+}
+
+const dueDateFormatter = new Intl.DateTimeFormat(undefined, {
+  day: "numeric",
+  month: "short",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function formatDue(dueAt: string): { label: string; overdue: boolean } {
+  const due = new Date(dueAt);
+  return { label: dueDateFormatter.format(due), overdue: due.getTime() < Date.now() };
 }
 
 export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
@@ -49,6 +62,7 @@ export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
         >
           {tasks.map((task) => {
             const isBusy = busyId === task.id;
+            const due = task.dueAt ? formatDue(task.dueAt) : null;
             return (
               <li
                 key={task.id}
@@ -57,13 +71,28 @@ export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: 8,
-                  border: "1px solid #e5e7eb",
+                  border: due?.overdue ? "1px solid #f3b4ab" : "1px solid #e5e7eb",
+                  backgroundColor: due?.overdue ? "#fef2f1" : "#ffffff",
                   borderRadius: 10,
                   padding: "10px 12px",
-                  backgroundColor: "#ffffff",
                 }}
               >
-                <span style={{ fontSize: 15 }}>{task.title}</span>
+                <div>
+                  <span style={{ fontSize: 15 }}>{task.title}</span>
+                  {due ? (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        marginTop: 2,
+                        color: due.overdue ? "#b42318" : "#6b7280",
+                        fontWeight: due.overdue ? 600 : 400,
+                      }}
+                    >
+                      {due.overdue ? "Overdue — " : "Due "}
+                      {due.label}
+                    </div>
+                  ) : null}
+                </div>
                 <button
                   type="button"
                   disabled={isBusy}

@@ -89,17 +89,29 @@ export async function GET(request: Request) {
 
 interface QuickAddPayload {
   title: string;
+  dueAt: Date | null;
 }
 
 function parseQuickAddPayload(body: unknown): QuickAddPayload | null {
   if (typeof body !== "object" || body === null) {
     return null;
   }
-  const { title } = body as Record<string, unknown>;
+  const { title, dueAt } = body as Record<string, unknown>;
   if (typeof title !== "string" || title.trim().length === 0) {
     return null;
   }
-  return { title };
+
+  if (dueAt === undefined || dueAt === null) {
+    return { title, dueAt: null };
+  }
+  if (typeof dueAt !== "string") {
+    return null;
+  }
+  const parsedDueAt = new Date(dueAt);
+  if (Number.isNaN(parsedDueAt.getTime())) {
+    return null;
+  }
+  return { title, dueAt: parsedDueAt };
 }
 
 /**
@@ -112,14 +124,14 @@ export async function POST(request: Request) {
   const payload = parseQuickAddPayload(body);
   if (!payload) {
     return NextResponse.json(
-      { error: "Body must be { title: string }" },
+      { error: "Body must be { title: string, dueAt?: ISO string }" },
       { status: 400 },
     );
   }
 
   const [task] = await db
     .insert(tasks)
-    .values({ type: "todo", title: payload.title, status: "active" })
+    .values({ type: "todo", title: payload.title, status: "active", dueAt: payload.dueAt })
     .returning();
 
   return NextResponse.json(task, { status: 201 });

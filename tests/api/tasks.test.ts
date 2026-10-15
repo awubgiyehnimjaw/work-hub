@@ -142,6 +142,32 @@ test("POST /api/tasks returns 400 and creates nothing when title is missing", as
   expect(rows).toHaveLength(0);
 });
 
+test("POST /api/tasks accepts an optional dueAt and stores it", async () => {
+  const dueAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+  const res = await POST(postRequest({ title: "Invoice client", dueAt }));
+  expect(res.status).toBe(201);
+  const body = await res.json();
+  expect(new Date(body.dueAt).toISOString()).toBe(dueAt);
+
+  const [row] = await db.select().from(tasks);
+  expect(row.dueAt?.toISOString()).toBe(dueAt);
+});
+
+test("POST /api/tasks without a dueAt stores null, not a missing-field error", async () => {
+  const res = await POST(postRequest({ title: "No deadline" }));
+  expect(res.status).toBe(201);
+  const body = await res.json();
+  expect(body.dueAt).toBeNull();
+});
+
+test("POST /api/tasks returns 400 for a dueAt that isn't a valid date", async () => {
+  const res = await POST(postRequest({ title: "Bad date", dueAt: "not-a-date" }));
+  expect(res.status).toBe(400);
+
+  const rows = await db.select().from(tasks);
+  expect(rows).toHaveLength(0);
+});
+
 test("PATCH /api/tasks/:id with action 'complete' sets status and completedAt", async () => {
   const [task] = await db
     .insert(tasks)

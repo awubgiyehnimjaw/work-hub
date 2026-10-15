@@ -21,6 +21,7 @@ interface ApiTask {
   isStale: boolean;
   clientName: string | null;
   clientRecognized: boolean | null;
+  dueAt: string | null;
 }
 
 type LoadState = "loading" | "ready" | "error";
@@ -83,11 +84,11 @@ export default function HomePage() {
     setTasks((prev) => prev.filter((task) => task.id !== id));
   }
 
-  async function addTodo(title: string) {
+  async function addTodo(title: string, dueAt: Date | null) {
     const res = await fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, dueAt: dueAt ? dueAt.toISOString() : undefined }),
     });
     if (!res.ok) {
       throw new Error("Failed to add to-do");
@@ -107,9 +108,14 @@ export default function HomePage() {
     <main style={{ maxWidth: 480, margin: "0 auto", padding: 16, fontFamily: "system-ui, sans-serif" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "8px 0 24px" }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>Work Hub</h1>
-        <a href="/history" style={{ fontSize: 14, color: "#6b7280", textDecoration: "none" }}>
-          History →
-        </a>
+        <div style={{ display: "flex", gap: 12 }}>
+          <a href="/suggestions" style={{ fontSize: 14, color: "#6b7280", textDecoration: "none" }}>
+            Suggestions →
+          </a>
+          <a href="/history" style={{ fontSize: 14, color: "#6b7280", textDecoration: "none" }}>
+            History →
+          </a>
+        </div>
       </div>
 
       <div style={{ marginBottom: 24 }}>

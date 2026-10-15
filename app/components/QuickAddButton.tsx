@@ -3,7 +3,7 @@
 import { useRef, useState, type FormEvent } from "react";
 
 interface QuickAddButtonProps {
-  onAdd: (title: string) => Promise<void>;
+  onAdd: (title: string, dueAt: Date | null) => Promise<void>;
 }
 
 /**
@@ -16,6 +16,9 @@ interface QuickAddButtonProps {
 export default function QuickAddButton({ onAdd }: QuickAddButtonProps) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
+  // Optional — left blank for the common case (per the "minimal taps"
+  // goal), only sent if the user actually picks a date/time.
+  const [dueAt, setDueAt] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -28,6 +31,7 @@ export default function QuickAddButton({ onAdd }: QuickAddButtonProps) {
   function closeInput() {
     setOpen(false);
     setTitle("");
+    setDueAt("");
     setError(null);
   }
 
@@ -41,8 +45,10 @@ export default function QuickAddButton({ onAdd }: QuickAddButtonProps) {
     setSubmitting(true);
     setError(null);
     try {
-      await onAdd(trimmed);
+      const parsedDueAt = dueAt ? new Date(dueAt) : null;
+      await onAdd(trimmed, parsedDueAt && !Number.isNaN(parsedDueAt.getTime()) ? parsedDueAt : null);
       setTitle("");
+      setDueAt("");
       inputRef.current?.focus();
     } catch {
       setError("Couldn't add that — try again.");
@@ -123,6 +129,21 @@ export default function QuickAddButton({ onAdd }: QuickAddButtonProps) {
           Done
         </button>
       </div>
+      <input
+        type="datetime-local"
+        value={dueAt}
+        onChange={(event) => setDueAt(event.target.value)}
+        disabled={submitting}
+        aria-label="Due date (optional)"
+        style={{
+          padding: "8px 10px",
+          fontSize: 13,
+          borderRadius: 8,
+          border: "1px solid #d1d5db",
+          color: dueAt ? "#111827" : "#9ca3af",
+          width: "100%",
+        }}
+      />
       {error ? (
         <p role="alert" style={{ color: "#b42318", fontSize: 13, margin: 0 }}>
           {error}
