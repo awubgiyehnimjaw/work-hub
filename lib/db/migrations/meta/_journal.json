@@ -36,6 +36,13 @@
       "when": 1792051823173,
       "tag": "0004_add_todo_due_dates_and_weekly_digest",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792083809780,
+      "tag": "0005_add_content_ideas_and_telegram_updates",
+      "breakpoints": true
     }
   ]
 }

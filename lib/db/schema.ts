@@ -1,5 +1,6 @@
 import {
   boolean,
+  integer,
   pgEnum,
   pgTable,
   text,
@@ -59,6 +60,13 @@ export const tasks = pgTable("tasks", {
   dueNotifiedAt: timestamp("due_notified_at"),
 });
 
+export const contentIdeas = pgTable("content_ideas", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  clientId: uuid("client_id").notNull().references(() => clients.id),
+  text: text("text").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const suggestions = pgTable("suggestions", {
   id: uuid("id").primaryKey().defaultRandom(),
   category: suggestionCategoryEnum("category").notNull(),
@@ -104,4 +112,12 @@ export const syncState = pgTable("sync_state", {
   // current week so the digest fires at most once per week even though
   // the reminder-check cron runs every 15 minutes.
   weeklyDigestSentAt: timestamp("weekly_digest_sent_at"),
+});
+
+// De-dup for the Telegram webhook: `updateId` is Telegram's own `update_id`,
+// used directly as the primary key (no surrogate id needed) so a retried
+// delivery of the same update is a no-op insert rather than reprocessed.
+export const telegramUpdates = pgTable("telegram_updates", {
+  updateId: integer("update_id").primaryKey(),
+  processedAt: timestamp("processed_at").notNull().defaultNow(),
 });
