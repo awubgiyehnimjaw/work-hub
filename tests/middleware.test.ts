@@ -44,6 +44,7 @@ test.each([
   "/api/auth/login",
   "/api/auth/logout",
   "/api/cron/poll-frameio",
+  "/api/telegram/webhook",
   "/manifest.json",
   "/sw.js",
   "/icons/icon-192.png",
