@@ -5,7 +5,15 @@ import { clients, contentIdeas, telegramUpdates } from "@/lib/db/schema";
 import { createTodo } from "@/lib/tasks/create-todo";
 import { checkTelegramWebhookSecret } from "@/lib/telegram/webhook-auth";
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
-import { parseCaptureMessage, transcribeVoice } from "@/lib/openai/client";
+import { formatLocalDateTime, parseCaptureMessage, transcribeVoice } from "@/lib/openai/client";
+
+// Chains up to four external calls (Telegram file lookup + download, then
+// OpenAI transcription + parsing) — matches the cron routes' own
+// maxDuration, so a slow run ends in a reply (the try/catch below) rather
+// than being killed mid-flight by the platform's default timeout, which
+// would otherwise leave the message claimed (via the de-dup insert) but
+// never actually saved or replied to.
+export const maxDuration = 60;
 
 interface TelegramUpdate {
   update_id: number;
@@ -80,31 +88,51 @@ export async function POST(request: Request) {
   }
 
   const recognizedClients = await db.select().from(clients).where(eq(clients.recognized, true));
-  const parsed = await parseCaptureMessage(text, new Date(), recognizedClients.map((c) => c.displayName));
 
-  if (parsed.type === "todo") {
-    const dueAt = parsed.dueAt ? new Date(parsed.dueAt) : null;
-    await createTodo({ title: parsed.text, dueAt });
-    const dueSuffix = dueAt ? ` (due ${dueAt.toLocaleString()})` : "";
-    await replySafely(chatId, `✅ To-do added: ${parsed.text}${dueSuffix}`);
-  } else if (parsed.type === "content_idea") {
-    const matchedClient = parsed.client
-      ? recognizedClients.find((c) => c.displayName.toLowerCase() === parsed.client!.toLowerCase())
-      : undefined;
-    if (!matchedClient) {
+  // Everything from here on (parsing, the todo/content-idea write, the
+  // confirmation reply) is wrapped in one try/catch: the telegramUpdates
+  // row above is already committed, so an unhandled throw here — a bad
+  // dueAt string from the model, a transient DB error — would otherwise
+  // lose the message silently (the retry is a no-op duplicate) with no
+  // reply at all, exactly the anti-goal the spec calls out.
+  try {
+    const parsed = await parseCaptureMessage(text, new Date(), recognizedClients.map((c) => c.displayName));
+
+    if (parsed.type === "todo") {
+      let dueAt: Date | null = null;
+      if (parsed.dueAt) {
+        const candidate = new Date(parsed.dueAt);
+        if (Number.isNaN(candidate.getTime())) {
+          console.error(`telegram webhook: model returned an unparseable dueAt "${parsed.dueAt}", saving with no due date`);
+        } else {
+          dueAt = candidate;
+        }
+      }
+      await createTodo({ title: parsed.text, dueAt });
+      const dueSuffix = dueAt ? ` (due ${formatLocalDateTime(dueAt)})` : "";
+      await replySafely(chatId, `✅ To-do added: ${parsed.text}${dueSuffix}`);
+    } else if (parsed.type === "content_idea") {
+      const matchedClient = parsed.client
+        ? recognizedClients.find((c) => c.displayName.toLowerCase() === parsed.client!.toLowerCase())
+        : undefined;
+      if (!matchedClient) {
+        await replySafely(
+          chatId,
+          `I couldn't match "${parsed.client ?? "that client"}" to a client — try resending with the exact client name.`,
+        );
+      } else {
+        await db.insert(contentIdeas).values({ clientId: matchedClient.id, text: parsed.text });
+        await replySafely(chatId, `✅ Content idea added for ${matchedClient.displayName}: ${parsed.text}`);
+      }
+    } else {
       await replySafely(
         chatId,
-        `I couldn't match "${parsed.client ?? "that client"}" to a client — try resending with the exact client name.`,
+        'I couldn\'t tell if that\'s a to-do or a content idea — try again starting with "to do" or "content idea for <client>".',
       );
-    } else {
-      await db.insert(contentIdeas).values({ clientId: matchedClient.id, text: parsed.text });
-      await replySafely(chatId, `✅ Content idea added for ${matchedClient.displayName}: ${parsed.text}`);
     }
-  } else {
-    await replySafely(
-      chatId,
-      'I couldn\'t tell if that\'s a to-do or a content idea — try again starting with "to do" or "content idea for <client>".',
-    );
+  } catch (error) {
+    console.error("telegram webhook: failed to save the parsed message", error);
+    await replySafely(chatId, "Couldn't save that — please resend.");
   }
 
   return NextResponse.json({ status: "ok" }, { status: 200 });

@@ -249,10 +249,21 @@ for the full design). Do this together, in order:
 3. Generate `TELEGRAM_WEBHOOK_SECRET` the same way as `CRON_SECRET`:
    `openssl rand -hex 32`.
 
-### 7.2 Set env vars and deploy
+### 7.2 Run the migration, set env vars, and deploy
 
-Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
-`TELEGRAM_ALLOWED_CHAT_ID`, and `OPENAI_API_KEY` in Vercel (§2), then
+This feature's tables (`content_ideas`, `telegram_updates`) come from
+migration `0005` — run it against Neon the same way as §4, from your own
+machine:
+
+```bash
+DATABASE_URL="<your Neon connection string>" npx drizzle-kit migrate
+```
+
+Skipping this step first means the webhook replies with nothing and
+`/content-ideas` fails to load, since neither table exists yet.
+
+Then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
+`TELEGRAM_ALLOWED_CHAT_ID`, and `OPENAI_API_KEY` in Vercel (§2), and
 redeploy.
 
 ### 7.3 Register the webhook

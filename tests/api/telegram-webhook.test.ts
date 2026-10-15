@@ -14,8 +14,17 @@ vi.mock("@/lib/openai/client", () => ({
   parseCaptureMessage: vi.fn(),
 }));
 
+// Wraps the real createTodo so every existing test still hits the real DB
+// insert by default — only the two tests below override it to simulate a
+// write failure.
+vi.mock("@/lib/tasks/create-todo", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/tasks/create-todo")>("@/lib/tasks/create-todo");
+  return { ...actual, createTodo: vi.fn(actual.createTodo) };
+});
+
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
 import { parseCaptureMessage, transcribeVoice } from "@/lib/openai/client";
+import { createTodo } from "@/lib/tasks/create-todo";
 import { POST } from "@/app/api/telegram/webhook/route";
 
 const mockSendMessage = vi.mocked(sendMessage);
@@ -23,6 +32,7 @@ const mockGetFilePath = vi.mocked(getFilePath);
 const mockDownloadFile = vi.mocked(downloadFile);
 const mockTranscribeVoice = vi.mocked(transcribeVoice);
 const mockParseCaptureMessage = vi.mocked(parseCaptureMessage);
+const mockCreateTodo = vi.mocked(createTodo);
 
 process.env.TELEGRAM_WEBHOOK_SECRET = "test-webhook-secret";
 process.env.TELEGRAM_ALLOWED_CHAT_ID = "999";
@@ -46,6 +56,7 @@ beforeEach(async () => {
   mockDownloadFile.mockClear();
   mockTranscribeVoice.mockClear();
   mockParseCaptureMessage.mockClear();
+  mockCreateTodo.mockClear();
 });
 
 test("returns 401 when the secret header is wrong", async () => {
@@ -126,4 +137,25 @@ test("a reply-send failure doesn't prevent the underlying write or crash the req
   expect(res.status).toBe(200);
   const rows = await db.select().from(tasks).where(eq(tasks.type, "todo"));
   expect(rows).toHaveLength(1);
+});
+
+test("an unparseable dueAt from the model doesn't crash the request — the todo is saved with no due date", async () => {
+  mockParseCaptureMessage.mockResolvedValue({ type: "todo", client: null, text: "bad date todo", dueAt: "not-a-real-date" });
+  const res = await POST(updateRequest({ update_id: 9, message: { chat: { id: ALLOWED_CHAT_ID }, text: "to do, bad date todo" } }));
+  expect(res.status).toBe(200);
+  const rows = await db.select().from(tasks).where(eq(tasks.type, "todo"));
+  expect(rows).toHaveLength(1);
+  expect(rows[0].title).toBe("bad date todo");
+  expect(rows[0].dueAt).toBeNull();
+  expect(mockSendMessage).toHaveBeenCalledWith(ALLOWED_CHAT_ID, expect.stringContaining("bad date todo"));
+});
+
+test("a failure saving the parsed message replies with an error instead of crashing", async () => {
+  mockParseCaptureMessage.mockResolvedValue({ type: "todo", client: null, text: "will fail to save", dueAt: null });
+  mockCreateTodo.mockRejectedValueOnce(new Error("database is down"));
+  const res = await POST(updateRequest({ update_id: 10, message: { chat: { id: ALLOWED_CHAT_ID }, text: "to do, will fail to save" } }));
+  expect(res.status).toBe(200);
+  const rows = await db.select().from(tasks).where(eq(tasks.type, "todo"));
+  expect(rows).toHaveLength(0);
+  expect(mockSendMessage).toHaveBeenCalledWith(ALLOWED_CHAT_ID, expect.stringContaining("resend"));
 });
