@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "@/lib/auth/timing-safe-equal";
+
 /**
  * Bearer-secret auth for the cron endpoints (`/api/cron/*`). Those routes
  * are called by an external scheduler (GitHub Actions), not Callum's own
@@ -23,16 +25,4 @@ export function checkCronSecret(req: Request): boolean {
   }
 
   return timingSafeEqual(token, secret);
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i++) {
-    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return mismatch === 0;
 }
