@@ -7,7 +7,16 @@
 const GROQ_API_BASE = "https://api.groq.com/openai";
 
 const TRANSCRIPTION_MODEL = "whisper-large-v3-turbo";
-const PARSE_MODEL = "llama-3.3-70b-versatile";
+// Confirmed live against this account's actual GET /v1/models response
+// (not just a provider's own docs/changelog) — Groq's hosted lineup
+// shifts over time (llama-3.3-70b-versatile, used originally, had
+// already been delisted by the time this was first tried live), so the
+// model list is the source of truth, not any cached assumption about it.
+// On zero marginal cost (free tier either way), this picks the largest
+// available general chat model for the most reliable classification,
+// rather than the smallest/cheapest — unlike the original OpenAI choice,
+// price is no longer a differentiator here.
+const PARSE_MODEL = "openai/gpt-oss-120b";
 
 // Work Hub is a single-user app for Callum, who operates on Singapore
 // time — hardcoded the same way lib/reminders/check.ts already assumes
