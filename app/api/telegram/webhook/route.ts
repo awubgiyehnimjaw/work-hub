@@ -5,7 +5,7 @@ import { clients, contentIdeas, telegramUpdates } from "@/lib/db/schema";
 import { createTodo } from "@/lib/tasks/create-todo";
 import { checkTelegramWebhookSecret } from "@/lib/telegram/webhook-auth";
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
-import { formatLocalDateTime, parseCaptureMessage, transcribeVoice } from "@/lib/openai/client";
+import { formatLocalDateTime, parseCaptureMessage, transcribeVoice } from "@/lib/groq/client";
 
 // Chains up to four external calls (Telegram file lookup + download, then
 // OpenAI transcription + parsing) — matches the cron routes' own

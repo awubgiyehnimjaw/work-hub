@@ -1,16 +1,13 @@
-const OPENAI_API_BASE = "https://api.openai.com";
+// Groq's API is OpenAI-compatible (same request/response shapes at
+// /openai/v1/...), so this client is a near-drop-in replacement for the
+// equivalent OpenAI calls, just pointed at open-weight models instead —
+// switched to from OpenAI after the Telegram bot's first live run hit
+// "insufficient_quota" with no billing set up; Groq's free tier needs no
+// card and is far more than this single-user bot's volume will ever use.
+const GROQ_API_BASE = "https://api.groq.com/openai";
 
-// Picked as current, cost-appropriate defaults at build time (Oct 2026) —
-// verify both are still live on OpenAI's model list before connecting a
-// real API key; a retired model name here would make every capture fail
-// at the API call rather than at build time.
-const TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
-// "gpt-5.6" alone routes to the flagship "Sol" tier — "-luna" is the
-// fast/cheap tier, the right fit for a small structured-extraction task
-// like this one (matches the design's "a small/cheap chat model is
-// plenty"). Paired with a low reasoning effort for latency.
-const PARSE_MODEL = "gpt-5.6-luna";
-const PARSE_REASONING_EFFORT = "low";
+const TRANSCRIPTION_MODEL = "whisper-large-v3-turbo";
+const PARSE_MODEL = "llama-3.3-70b-versatile";
 
 // Work Hub is a single-user app for Callum, who operates on Singapore
 // time — hardcoded the same way lib/reminders/check.ts already assumes
@@ -41,7 +38,7 @@ export interface ParsedCapture {
   dueAt: string | null;
 }
 
-function requireEnv(name: "OPENAI_API_KEY"): string {
+function requireEnv(name: "GROQ_API_KEY"): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(`${name} environment variable is not set`);
@@ -50,20 +47,18 @@ function requireEnv(name: "OPENAI_API_KEY"): string {
 }
 
 export async function transcribeVoice(audio: ArrayBuffer, filename: string): Promise<string> {
-  const apiKey = requireEnv("OPENAI_API_KEY");
+  const apiKey = requireEnv("GROQ_API_KEY");
 
   // Telegram voice notes are Opus-in-OGG, delivered with a ".oga" path
-  // (e.g. "voice/file_1.oga") and no MIME type of their own. OpenAI's
-  // transcription endpoint documents ".ogg" (not ".oga") as a supported
-  // extension, so the upload is normalized to that regardless of what
-  // Telegram's own file path used, with an explicit audio/ogg type rather
-  // than relying on the browser/runtime to infer one from a blank Blob —
-  // the caller's `filename` (Telegram's own file path) isn't used here.
+  // (e.g. "voice/file_1.oga") and no MIME type of their own. Normalized
+  // to an explicit ".ogg" filename and audio/ogg type rather than relying
+  // on the runtime to infer one from a blank Blob — the caller's
+  // `filename` (Telegram's own file path) isn't used here.
   const form = new FormData();
   form.append("file", new Blob([audio], { type: "audio/ogg" }), "voice.ogg");
   form.append("model", TRANSCRIPTION_MODEL);
 
-  const response = await fetch(`${OPENAI_API_BASE}/v1/audio/transcriptions`, {
+  const response = await fetch(`${GROQ_API_BASE}/v1/audio/transcriptions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
@@ -71,7 +66,7 @@ export async function transcribeVoice(audio: ArrayBuffer, filename: string): Pro
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    throw new Error(`OpenAI transcription failed: ${response.status} ${body}`);
+    throw new Error(`Groq transcription failed: ${response.status} ${body}`);
   }
 
   const data = (await response.json()) as { text: string };
@@ -122,9 +117,9 @@ export async function parseCaptureMessage(
   clientNames: string[],
 ): Promise<ParsedCapture> {
   try {
-    const apiKey = requireEnv("OPENAI_API_KEY");
+    const apiKey = requireEnv("GROQ_API_KEY");
 
-    const response = await fetch(`${OPENAI_API_BASE}/v1/chat/completions`, {
+    const response = await fetch(`${GROQ_API_BASE}/v1/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -132,7 +127,6 @@ export async function parseCaptureMessage(
       },
       body: JSON.stringify({
         model: PARSE_MODEL,
-        reasoning_effort: PARSE_REASONING_EFFORT,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: buildParseSystemPrompt(now, clientNames) },
@@ -143,14 +137,14 @@ export async function parseCaptureMessage(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      console.error(`parseCaptureMessage: OpenAI request failed: ${response.status} ${body}`);
+      console.error(`parseCaptureMessage: Groq request failed: ${response.status} ${body}`);
       return parseFallback(text);
     }
 
     const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      console.error("parseCaptureMessage: OpenAI response had no message content");
+      console.error("parseCaptureMessage: Groq response had no message content");
       return parseFallback(text);
     }
 

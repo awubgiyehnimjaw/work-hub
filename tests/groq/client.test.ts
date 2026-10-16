@@ -1,8 +1,8 @@
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
-import { parseCaptureMessage, transcribeVoice } from "@/lib/openai/client";
+import { parseCaptureMessage, transcribeVoice } from "@/lib/groq/client";
 
 beforeAll(() => {
-  process.env.OPENAI_API_KEY = "test-openai-key";
+  process.env.GROQ_API_KEY = "test-groq-key";
 });
 
 afterEach(() => {

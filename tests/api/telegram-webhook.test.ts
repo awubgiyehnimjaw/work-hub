@@ -9,7 +9,7 @@ vi.mock("@/lib/telegram/client", () => ({
   downloadFile: vi.fn(),
 }));
 
-vi.mock("@/lib/openai/client", () => ({
+vi.mock("@/lib/groq/client", () => ({
   transcribeVoice: vi.fn(),
   parseCaptureMessage: vi.fn(),
 }));
@@ -23,7 +23,7 @@ vi.mock("@/lib/tasks/create-todo", async () => {
 });
 
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
-import { parseCaptureMessage, transcribeVoice } from "@/lib/openai/client";
+import { parseCaptureMessage, transcribeVoice } from "@/lib/groq/client";
 import { createTodo } from "@/lib/tasks/create-todo";
 import { POST } from "@/app/api/telegram/webhook/route";
 

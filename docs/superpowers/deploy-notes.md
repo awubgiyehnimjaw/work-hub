@@ -80,7 +80,7 @@ too.
 | `TELEGRAM_BOT_TOKEN` | The bot token from @BotFather — see §6.1. |
 | `TELEGRAM_WEBHOOK_SECRET` | Any long random string (e.g. `openssl rand -hex 32`). Checked against the `X-Telegram-Bot-Api-Secret-Token` header on every webhook call (`lib/telegram/webhook-auth.ts`) — same bearer-secret shape as `CRON_SECRET`. Must be set to the **exact same value** passed as `secret_token` when registering the webhook in §6.1. |
 | `TELEGRAM_ALLOWED_CHAT_ID` | Callum's own numeric Telegram chat id — see §6.1. A message from any other chat is fully ignored. |
-| `OPENAI_API_KEY` | An API key from [platform.openai.com](https://platform.openai.com) — used for voice transcription and structured message parsing (`lib/openai/client.ts`). |
+| `GROQ_API_KEY` | A free API key from [console.groq.com](https://console.groq.com) (no card needed) — used for voice transcription and structured message parsing (`lib/groq/client.ts`). Originally built against OpenAI, switched after the bot's first live run hit `insufficient_quota` with no billing set up; Groq's API is OpenAI-compatible and its free tier is far more than this single-user bot will ever use. |
 
 After setting these, trigger a redeploy (Vercel → Deployments → ⋯ →
 Redeploy) — env var changes don't apply retroactively to a deployment
@@ -263,7 +263,7 @@ Skipping this step first means the webhook replies with nothing and
 `/content-ideas` fails to load, since neither table exists yet.
 
 Then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
-`TELEGRAM_ALLOWED_CHAT_ID`, and `OPENAI_API_KEY` in Vercel (§2), and
+`TELEGRAM_ALLOWED_CHAT_ID`, and `GROQ_API_KEY` in Vercel (§2), and
 redeploy.
 
 ### 7.3 Register the webhook
