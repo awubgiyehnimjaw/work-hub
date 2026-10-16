@@ -18,7 +18,7 @@ const TRANSCRIPTION_MODEL = "whisper-large-v3-turbo";
 // price is no longer a differentiator here.
 const PARSE_MODEL = "openai/gpt-oss-120b";
 
-// Work Hub is a single-user app for Callum, who operates on Singapore
+// ARC Hub is a single-user app for Callum, who operates on Singapore
 // time — hardcoded the same way lib/reminders/check.ts already assumes
 // SGT for the weekly digest, rather than adding a new env var for a
 // single-user constant. Used both to give the model a correct local-time

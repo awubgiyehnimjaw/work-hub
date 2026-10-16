@@ -45,7 +45,7 @@ function getResolveFn() {
 test("resolveNotificationClickAction opens a new window when no client matches the target URL exactly", () => {
   const resolve = getResolveFn();
 
-  // The real-world case the review flagged: a Work Hub dashboard tab is
+  // The real-world case the review flagged: an ARC Hub dashboard tab is
   // open (same-origin) but the notification's target is an external
   // Frame.io link — same-origin must NOT be treated as a match.
   const result = resolve(["https://workhub.example/"], "https://app.frame.io/reviews/abc123");
@@ -75,7 +75,7 @@ test("resolveNotificationClickAction opens a new window when there are no open c
 test("resolveNotificationClickAction does not match on a same-origin URL that differs from the target", () => {
   const resolve = getResolveFn();
 
-  // Two same-origin Work Hub tabs open at different routes, neither of
+  // Two same-origin ARC Hub tabs open at different routes, neither of
   // which is the (external) target — must still open a new window rather
   // than focusing either one.
   const result = resolve(

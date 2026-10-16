@@ -55,7 +55,7 @@ export default function LoginPage() {
         }}
       >
         <h1 style={{ fontSize: 22, fontWeight: 800, margin: "0 0 4px", letterSpacing: -0.3, textAlign: "center" }}>
-          Work Hub
+          ARC Hub
         </h1>
         <p style={{ fontSize: 14, color: "var(--color-text-muted)", margin: "0 0 24px", textAlign: "center" }}>
           Enter your passcode to continue

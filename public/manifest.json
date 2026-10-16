@@ -1,6 +1,6 @@
 {
-  "name": "Work Hub",
-  "short_name": "Work Hub",
+  "name": "ARC Hub",
+  "short_name": "ARC Hub",
   "description": "Single-user work hub for Frame.io reviews, calendar, and to-dos.",
   "start_url": "/",
   "scope": "/",

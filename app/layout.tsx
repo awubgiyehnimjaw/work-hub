@@ -4,7 +4,7 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Work Hub",
+  title: "ARC Hub",
   description: "Single-user work hub for Frame.io reviews, calendar, and to-dos.",
   manifest: "/manifest.json",
   icons: {
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Work Hub",
+    title: "ARC Hub",
   },
 };
 
