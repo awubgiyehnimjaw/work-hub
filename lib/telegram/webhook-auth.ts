@@ -20,3 +20,18 @@ export function checkTelegramWebhookSecret(req: Request): boolean {
 
   return timingSafeEqual(header, secret);
 }
+
+/**
+ * Whether `chatId` is one of the Telegram chats the capture bot acts on —
+ * a comma-separated allowlist (Callum's own chat, plus anyone else he's
+ * added), fails closed just like `checkTelegramWebhookSecret` if unset.
+ */
+export function isAllowedChatId(chatId: number): boolean {
+  const raw = process.env.TELEGRAM_ALLOWED_CHAT_IDS;
+  if (!raw) {
+    return false;
+  }
+
+  const allowed = raw.split(",").map((id) => id.trim()).filter((id) => id.length > 0);
+  return allowed.includes(String(chatId));
+}

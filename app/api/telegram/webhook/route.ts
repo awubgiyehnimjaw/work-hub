@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { clients, contentIdeas, telegramUpdates } from "@/lib/db/schema";
 import { createTodo } from "@/lib/tasks/create-todo";
-import { checkTelegramWebhookSecret } from "@/lib/telegram/webhook-auth";
+import { checkTelegramWebhookSecret, isAllowedChatId } from "@/lib/telegram/webhook-auth";
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
 import { formatLocalDateTime, parseCaptureMessage, transcribeVoice } from "@/lib/groq/client";
 
@@ -36,7 +36,7 @@ async function replySafely(chatId: number, text: string): Promise<void> {
 /**
  * Receives every Telegram update for the capture bot. Always responds 200
  * once past the secret check (Telegram retries on a non-200 response),
- * covering: de-dup of a retried `update_id`, the single allowed chat,
+ * covering: de-dup of a retried `update_id`, the allowed-chats list,
  * voice transcription, structured parsing, and writing the result as a
  * to-do or a content idea with a one-line reply either way.
  */
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
   }
 
   const chatId = message.chat.id;
-  if (String(chatId) !== process.env.TELEGRAM_ALLOWED_CHAT_ID) {
+  if (!isAllowedChatId(chatId)) {
     // Fully ignored — no DB write already happened beyond the de-dup row,
     // and no reply, so an unauthorized sender learns nothing.
     return NextResponse.json({ status: "ignored" }, { status: 200 });

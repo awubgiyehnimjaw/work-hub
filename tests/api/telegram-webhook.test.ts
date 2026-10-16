@@ -35,7 +35,7 @@ const mockParseCaptureMessage = vi.mocked(parseCaptureMessage);
 const mockCreateTodo = vi.mocked(createTodo);
 
 process.env.TELEGRAM_WEBHOOK_SECRET = "test-webhook-secret";
-process.env.TELEGRAM_ALLOWED_CHAT_ID = "999";
+process.env.TELEGRAM_ALLOWED_CHAT_IDS = "999";
 const ALLOWED_CHAT_ID = 999;
 
 function updateRequest(body: unknown, secret = "test-webhook-secret"): Request {
@@ -107,6 +107,23 @@ test("a message from a chat other than the allowed one is fully ignored — no D
   expect(res.status).toBe(200);
   expect(await db.select().from(tasks)).toHaveLength(0);
   expect(mockSendMessage).not.toHaveBeenCalled();
+});
+
+test("a second chat id added to the allowlist works the same as the first", async () => {
+  const originalAllowed = process.env.TELEGRAM_ALLOWED_CHAT_IDS;
+  process.env.TELEGRAM_ALLOWED_CHAT_IDS = `${ALLOWED_CHAT_ID}, 2025127249`;
+  mockParseCaptureMessage.mockResolvedValue({ type: "todo", client: null, text: "from the second account", dueAt: null });
+
+  const res = await POST(
+    updateRequest({ update_id: 50, message: { chat: { id: 2025127249 }, text: "to do, from the second account" } }),
+  );
+
+  expect(res.status).toBe(200);
+  const rows = await db.select().from(tasks).where(eq(tasks.type, "todo"));
+  expect(rows).toHaveLength(1);
+  expect(mockSendMessage).toHaveBeenCalledWith(2025127249, expect.stringContaining("from the second account"));
+
+  process.env.TELEGRAM_ALLOWED_CHAT_IDS = originalAllowed;
 });
 
 test("the same update_id delivered twice is only processed once", async () => {

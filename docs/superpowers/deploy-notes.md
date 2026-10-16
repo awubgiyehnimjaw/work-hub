@@ -77,9 +77,9 @@ too.
 | `FRAMEIO_ACCOUNT_ID` | The Frame.io account that project belongs to (used to build the V4 API path `/v4/accounts/{FRAMEIO_ACCOUNT_ID}/...` in `lib/frameio/client.ts`). Same source as `FRAMEIO_PROJECT_ID` — visible in the account's URL/settings in the Frame.io web app, or via the V4 API. |
 | `GOOGLE_CLIENT_ID` | The Client ID of a Google Cloud Console OAuth 2.0 Client (type "Web application") — see §3.2. |
 | `GOOGLE_CLIENT_SECRET` | The Client Secret from that same Google Cloud Console OAuth client. |
-| `TELEGRAM_BOT_TOKEN` | The bot token from @BotFather — see §6.1. |
-| `TELEGRAM_WEBHOOK_SECRET` | Any long random string (e.g. `openssl rand -hex 32`). Checked against the `X-Telegram-Bot-Api-Secret-Token` header on every webhook call (`lib/telegram/webhook-auth.ts`) — same bearer-secret shape as `CRON_SECRET`. Must be set to the **exact same value** passed as `secret_token` when registering the webhook in §6.1. |
-| `TELEGRAM_ALLOWED_CHAT_ID` | Callum's own numeric Telegram chat id — see §6.1. A message from any other chat is fully ignored. |
+| `TELEGRAM_BOT_TOKEN` | The bot token from @BotFather — see §7.1. |
+| `TELEGRAM_WEBHOOK_SECRET` | Any long random string (e.g. `openssl rand -hex 32`). Checked against the `X-Telegram-Bot-Api-Secret-Token` header on every webhook call (`lib/telegram/webhook-auth.ts`) — same bearer-secret shape as `CRON_SECRET`. Must be set to the **exact same value** passed as `secret_token` when registering the webhook in §7.3. |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Comma-separated numeric Telegram chat ids — see §7.1. A message from any chat not in this list is fully ignored. |
 | `GROQ_API_KEY` | A free API key from [console.groq.com](https://console.groq.com) (no card needed) — used for voice transcription and structured message parsing (`lib/groq/client.ts`). Originally built against OpenAI, switched after the bot's first live run hit `insufficient_quota` with no billing set up; Groq's API is OpenAI-compatible and its free tier is far more than this single-user bot will ever use. |
 | `POSTING_SCHEDULE_SHEET_CSV_URL` | The posting-schedule Google Sheet's own CSV export URL — see §8. |
 
@@ -241,12 +241,14 @@ for the full design). Do this together, in order:
 1. Message [@BotFather](https://t.me/BotFather) on Telegram, send
    `/newbot`, and follow the prompts. BotFather replies with the bot
    token — this is `TELEGRAM_BOT_TOKEN`.
-2. Find Callum's own numeric Telegram chat id — this is
-   `TELEGRAM_ALLOWED_CHAT_ID`, the only chat the webhook will act on.
-   Either message [@userinfobot](https://t.me/userinfobot) (it replies
-   with your id directly), or send the new bot any message and then
-   call `https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getUpdates` —
-   the `message.chat.id` in the response is it.
+2. Find the numeric Telegram chat id for everyone who should be able to
+   use the bot (Callum, plus anyone else) — these go into
+   `TELEGRAM_ALLOWED_CHAT_IDS`, comma-separated; any chat not on this
+   list is fully ignored. For each person, either have them message
+   [@userinfobot](https://t.me/userinfobot) (it replies with their id
+   directly), or have them send the new bot any message and then call
+   `https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getUpdates` — the
+   `message.chat.id` in the response is it.
 3. Generate `TELEGRAM_WEBHOOK_SECRET` the same way as `CRON_SECRET`:
    `openssl rand -hex 32`.
 
@@ -264,7 +266,7 @@ Skipping this step first means the webhook replies with nothing and
 `/content-ideas` fails to load, since neither table exists yet.
 
 Then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
-`TELEGRAM_ALLOWED_CHAT_ID`, and `GROQ_API_KEY` in Vercel (§2), and
+`TELEGRAM_ALLOWED_CHAT_IDS`, and `GROQ_API_KEY` in Vercel (§2), and
 redeploy.
 
 ### 7.3 Register the webhook
