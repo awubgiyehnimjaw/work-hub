@@ -1,0 +1,1 @@
+ALTER TABLE "sync_state" ADD COLUMN "posting_schedule_checked_at" timestamp;

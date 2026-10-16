@@ -2,6 +2,7 @@ import { and, eq, gte, isNotNull, isNull, lte } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { calendarEventsCache, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
 import { sendPush } from "@/lib/push/send";
+import { fetchPostingScheduleCsv, filterDueSoon, parsePostingScheduleCsv, sgtDateKey } from "@/lib/posting-schedule/sheet";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
@@ -14,6 +15,13 @@ const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
 // most one send regardless of how many ticks land inside that window.
 const DIGEST_DAY_OF_WEEK = 0; // Sunday
 const DIGEST_HOUR_UTC = 10;
+
+const TWENTY_HOURS_MS = 20 * 60 * 60 * 1000;
+
+// 01:00 UTC = 09:00 SGT — a "start of Callum's day" slot for the daily
+// posting-schedule check, distinct from the weekly digest's Sunday-evening
+// slot above.
+const POSTING_SCHEDULE_CHECK_HOUR_UTC = 1;
 
 /**
  * Sends a "this is due" push for every active to-do whose `dueAt` has
@@ -134,6 +142,81 @@ export async function maybeSendWeeklyDigest(now: Date): Promise<{ sent: boolean 
   }
 
   await db.update(syncState).set({ weeklyDigestSentAt: now }).where(eq(syncState.id, state.id));
+
+  return { sent: true };
+}
+
+function isInPostingScheduleWindow(now: Date): boolean {
+  return now.getUTCHours() === POSTING_SCHEDULE_CHECK_HOUR_UTC;
+}
+
+function describeDueDate(postDateKey: string, todayKey: string): string {
+  const diffDays = Math.round(
+    (Date.parse(`${postDateKey}T00:00:00Z`) - Date.parse(`${todayKey}T00:00:00Z`)) / (24 * 60 * 60 * 1000),
+  );
+  if (diffDays === 0) return "today";
+  if (diffDays === 1) return "tomorrow";
+  return `in ${diffDays} days`;
+}
+
+/**
+ * Sends a "what's due to post soon" push once a day, in the 09:00 SGT
+ * window, listing every posting-schedule entry due within the next 2
+ * days. Silent (but still marks the day checked) when nothing is due —
+ * unlike the weekly digest, a daily "nothing to post" push would just be
+ * noise. `postingScheduleCheckedAt` is only updated on a successful
+ * check (found something or not) — a fetch failure leaves it unset so
+ * the next cron tick (15 minutes later, still inside the same window)
+ * retries rather than silently skipping the whole day.
+ */
+export async function maybeSendPostingScheduleDigest(now: Date): Promise<{ sent: boolean }> {
+  if (!isInPostingScheduleWindow(now)) {
+    return { sent: false };
+  }
+
+  const state = await getSyncStateRow();
+  const alreadyCheckedToday =
+    state.postingScheduleCheckedAt !== null &&
+    now.getTime() - state.postingScheduleCheckedAt.getTime() < TWENTY_HOURS_MS;
+  if (alreadyCheckedToday) {
+    return { sent: false };
+  }
+
+  let dueSoon;
+  try {
+    const csv = await fetchPostingScheduleCsv();
+    dueSoon = filterDueSoon(parsePostingScheduleCsv(csv), now);
+  } catch (error) {
+    console.error("maybeSendPostingScheduleDigest: failed to fetch/parse the posting schedule", error);
+    return { sent: false };
+  }
+
+  await db.update(syncState).set({ postingScheduleCheckedAt: now }).where(eq(syncState.id, state.id));
+
+  if (dueSoon.length === 0) {
+    return { sent: false };
+  }
+
+  const todayKey = sgtDateKey(now);
+  const body = dueSoon
+    .map((entry) => `${entry.client} — ${entry.video} (${describeDueDate(entry.postDate!, todayKey)})`)
+    .join("; ");
+
+  const subscriptions = await db.select().from(pushSubscriptions);
+  for (const subscription of subscriptions) {
+    await sendPush(
+      {
+        endpoint: subscription.endpoint,
+        p256dh: subscription.p256dh,
+        auth: subscription.auth,
+      },
+      {
+        title: "Posting schedule",
+        body,
+        url: "",
+      },
+    );
+  }
 
   return { sent: true };
 }

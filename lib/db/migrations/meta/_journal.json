@@ -43,6 +43,13 @@
       "when": 1792083809780,
       "tag": "0005_add_content_ideas_and_telegram_updates",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792155213369,
+      "tag": "0006_add_posting_schedule_checked_at",
+      "breakpoints": true
     }
   ]
 }

@@ -112,6 +112,12 @@ export const syncState = pgTable("sync_state", {
   // current week so the digest fires at most once per week even though
   // the reminder-check cron runs every 15 minutes.
   weeklyDigestSentAt: timestamp("weekly_digest_sent_at"),
+  // When the posting-schedule check last ran during its daily window — set
+  // whether or not anything was actually due (unlike weeklyDigestSentAt,
+  // which is only set on an actual send), so a quiet day doesn't get
+  // re-checked every 15 minutes for the rest of that day's window, and a
+  // genuine fetch failure (left unset) gets retried on the next tick.
+  postingScheduleCheckedAt: timestamp("posting_schedule_checked_at"),
 });
 
 // De-dup for the Telegram webhook: `updateId` is Telegram's own `update_id`,

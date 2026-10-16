@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import CalendarAgenda from "./components/CalendarAgenda";
 import EnableNotificationsButton from "./components/EnableNotificationsButton";
+import PostingSchedule from "./components/PostingSchedule";
 import ReviewQueue from "./components/ReviewQueue";
 import SuggestionCard from "./components/SuggestionCard";
 import TodoList from "./components/TodoList";
@@ -146,6 +147,7 @@ export default function HomePage() {
       {state === "ready" ? (
         <>
           <ReviewQueue tasks={reviewTasks} onComplete={completeTask} onSnooze={snoozeTask} />
+          <PostingSchedule />
           <TodoList tasks={todoTasks} onAdd={addTodo} onComplete={completeTask} />
           <CalendarAgenda />
           {showSuggestion ? <SuggestionCard /> : null}

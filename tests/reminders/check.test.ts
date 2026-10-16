@@ -1,14 +1,21 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { db } from "@/lib/db/client";
 import { calendarEventsCache, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
-import { checkDueTodos, maybeSendWeeklyDigest } from "@/lib/reminders/check";
+import { checkDueTodos, maybeSendPostingScheduleDigest, maybeSendWeeklyDigest } from "@/lib/reminders/check";
 import { sendPush } from "@/lib/push/send";
+import { fetchPostingScheduleCsv } from "@/lib/posting-schedule/sheet";
 
 vi.mock("@/lib/push/send", () => ({
   sendPush: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/lib/posting-schedule/sheet", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/posting-schedule/sheet")>("@/lib/posting-schedule/sheet");
+  return { ...actual, fetchPostingScheduleCsv: vi.fn() };
+});
+
 const sendPushMock = vi.mocked(sendPush);
+const fetchPostingScheduleCsvMock = vi.mocked(fetchPostingScheduleCsv);
 
 beforeEach(async () => {
   await db.delete(tasks);
@@ -16,6 +23,7 @@ beforeEach(async () => {
   await db.delete(syncState);
   await db.delete(pushSubscriptions);
   sendPushMock.mockClear();
+  fetchPostingScheduleCsvMock.mockReset();
 
   await db.insert(pushSubscriptions).values({
     endpoint: "https://push.example.com/sub-1",
@@ -153,4 +161,84 @@ test("maybeSendWeeklyDigest does not send twice within the same week even if cal
 
   expect(result).toEqual({ sent: false });
   expect(sendPushMock).not.toHaveBeenCalled();
+});
+
+// 01:00 UTC = 09:00 SGT — inside the posting-schedule daily check window.
+const MORNING_IN_WINDOW = new Date("2026-10-16T01:05:00.000Z");
+const AFTERNOON_OUTSIDE_WINDOW = new Date("2026-10-16T05:05:00.000Z");
+
+const SAMPLE_CSV = [
+  "Client,Video,Edit By,Post Date,Notes,Posted",
+  "That Place,Creme Brulee Latte,15 Oct 2026,16 Oct 2026,,",
+  "Lovelots,ranking (jewelry),16 Oct 2026,17 Oct 2026,,",
+  "That Place,Bangers & Mash,16 Oct 2026,18 Oct 2026,,",
+  "That Place,Montage,19 Oct 2026,20 Oct 2026,,",
+].join("\n");
+
+test("maybeSendPostingScheduleDigest does nothing outside the daily check window", async () => {
+  const result = await maybeSendPostingScheduleDigest(AFTERNOON_OUTSIDE_WINDOW);
+
+  expect(result).toEqual({ sent: false });
+  expect(sendPushMock).not.toHaveBeenCalled();
+  expect(fetchPostingScheduleCsvMock).not.toHaveBeenCalled();
+});
+
+test("maybeSendPostingScheduleDigest sends a push listing everything due within 2 days", async () => {
+  fetchPostingScheduleCsvMock.mockResolvedValue(SAMPLE_CSV);
+
+  const result = await maybeSendPostingScheduleDigest(MORNING_IN_WINDOW);
+
+  expect(result).toEqual({ sent: true });
+  expect(sendPushMock).toHaveBeenCalledTimes(1);
+  const payload = sendPushMock.mock.calls[0][1];
+  expect(payload.title).toBe("Posting schedule");
+  expect(payload.body).toContain("That Place");
+  expect(payload.body).toContain("Creme Brulee Latte");
+  expect(payload.body).toContain("Lovelots");
+  expect(payload.body).toContain("ranking (jewelry)");
+  expect(payload.body).toContain("Bangers & Mash");
+  expect(payload.body).not.toContain("Montage"); // 4 days out — outside the window
+
+  const [state] = await db.select().from(syncState);
+  expect(state.postingScheduleCheckedAt).not.toBeNull();
+});
+
+test("maybeSendPostingScheduleDigest sends nothing, but still marks checked, when nothing is due soon", async () => {
+  fetchPostingScheduleCsvMock.mockResolvedValue(
+    ["Client,Video,Edit By,Post Date,Notes,Posted", "That Place,Montage,19 Oct 2026,20 Oct 2026,,"].join("\n"),
+  );
+
+  const result = await maybeSendPostingScheduleDigest(MORNING_IN_WINDOW);
+
+  expect(result).toEqual({ sent: false });
+  expect(sendPushMock).not.toHaveBeenCalled();
+
+  const [state] = await db.select().from(syncState);
+  expect(state.postingScheduleCheckedAt).not.toBeNull();
+});
+
+test("maybeSendPostingScheduleDigest does not re-check within the same day's window", async () => {
+  fetchPostingScheduleCsvMock.mockResolvedValue(SAMPLE_CSV);
+  await maybeSendPostingScheduleDigest(MORNING_IN_WINDOW);
+  sendPushMock.mockClear();
+  fetchPostingScheduleCsvMock.mockClear();
+
+  const laterSameWindow = new Date(MORNING_IN_WINDOW.getTime() + 20 * 60 * 1000);
+  const result = await maybeSendPostingScheduleDigest(laterSameWindow);
+
+  expect(result).toEqual({ sent: false });
+  expect(fetchPostingScheduleCsvMock).not.toHaveBeenCalled();
+  expect(sendPushMock).not.toHaveBeenCalled();
+});
+
+test("maybeSendPostingScheduleDigest leaves checkedAt unset on a fetch failure, so the next tick retries", async () => {
+  fetchPostingScheduleCsvMock.mockRejectedValue(new Error("network error"));
+
+  const result = await maybeSendPostingScheduleDigest(MORNING_IN_WINDOW);
+
+  expect(result).toEqual({ sent: false });
+  expect(sendPushMock).not.toHaveBeenCalled();
+
+  const [state] = await db.select().from(syncState);
+  expect(state?.postingScheduleCheckedAt ?? null).toBeNull();
 });

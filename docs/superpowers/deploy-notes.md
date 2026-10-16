@@ -81,6 +81,7 @@ too.
 | `TELEGRAM_WEBHOOK_SECRET` | Any long random string (e.g. `openssl rand -hex 32`). Checked against the `X-Telegram-Bot-Api-Secret-Token` header on every webhook call (`lib/telegram/webhook-auth.ts`) — same bearer-secret shape as `CRON_SECRET`. Must be set to the **exact same value** passed as `secret_token` when registering the webhook in §6.1. |
 | `TELEGRAM_ALLOWED_CHAT_ID` | Callum's own numeric Telegram chat id — see §6.1. A message from any other chat is fully ignored. |
 | `GROQ_API_KEY` | A free API key from [console.groq.com](https://console.groq.com) (no card needed) — used for voice transcription and structured message parsing (`lib/groq/client.ts`). Originally built against OpenAI, switched after the bot's first live run hit `insufficient_quota` with no billing set up; Groq's API is OpenAI-compatible and its free tier is far more than this single-user bot will ever use. |
+| `POSTING_SCHEDULE_SHEET_CSV_URL` | The posting-schedule Google Sheet's own CSV export URL — see §8. |
 
 After setting these, trigger a redeploy (Vercel → Deployments → ⋯ →
 Redeploy) — env var changes don't apply retroactively to a deployment
@@ -298,7 +299,31 @@ it replies and the to-do shows up on the dashboard; then try "content
 idea for ARC, a test idea" and confirm it shows up on `/content-ideas`
 under ARC. Try a voice note too.
 
-## 8. Verify end to end
+## 8. Connect the posting-schedule sheet
+
+Powers the dashboard's "Posting schedule — due soon" card and the daily
+09:00 SGT push (anything due to post within 2 days) —
+`lib/posting-schedule/sheet.ts`, `lib/reminders/check.ts`.
+
+1. In the Google Sheet, File → Share → "Get link", and confirm it's set
+   to "Anyone with the link" can view. No Google account/OAuth is needed
+   on this app's side — the sheet's own CSV export is fetched directly.
+2. Build the CSV export URL:
+   `https://docs.google.com/spreadsheets/d/<SHEET_ID>/export?format=csv&gid=<TAB_GID>`
+   — `<SHEET_ID>` is the long id in the sheet's URL
+   (`.../spreadsheets/d/<SHEET_ID>/edit...`), `<TAB_GID>` is the `gid=`
+   value in the URL when that specific tab is open.
+3. Set `POSTING_SCHEDULE_SHEET_CSV_URL` to that URL in Vercel (§2), and
+   redeploy.
+4. The sheet needs exactly this header row, in this order: `Client,
+   Video, Edit By, Post Date, Notes, Posted` — only `Client`, `Video`,
+   `Post Date`, and `Notes` are read (`Edit By`/`Posted` are the
+   editor's own tracking columns, unused here). `Post Date` must be in
+   the sheet's default "DD Mon YYYY" format (e.g. "16 Oct 2026"). A row
+   with `Notes` set to `DONE` or `HOLD` (case-insensitive) is treated as
+   not needing a reminder, even if its Post Date is otherwise due soon.
+
+## 9. Verify end to end
 
 1. Actions tab → confirm recent runs of both `poll-frameio` and
    `fetch-calendar` jobs are green. A red run's log will show the `curl`
