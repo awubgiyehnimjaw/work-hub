@@ -50,6 +50,13 @@
       "when": 1792155213369,
       "tag": "0006_add_posting_schedule_checked_at",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792330636606,
+      "tag": "0007_add_todo_due_soon_notifications",
+      "breakpoints": true
     }
   ]
 }

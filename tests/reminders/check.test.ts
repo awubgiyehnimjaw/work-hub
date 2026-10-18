@@ -1,7 +1,8 @@
 import { beforeEach, expect, test, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { calendarEventsCache, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
-import { checkDueTodos, maybeSendPostingScheduleDigest, maybeSendWeeklyDigest } from "@/lib/reminders/check";
+import { checkDueTodos, checkUpcomingDueTodos, maybeSendPostingScheduleDigest, maybeSendWeeklyDigest } from "@/lib/reminders/check";
 import { sendPush } from "@/lib/push/send";
 import { fetchPostingScheduleCsv } from "@/lib/posting-schedule/sheet";
 
@@ -241,4 +242,120 @@ test("maybeSendPostingScheduleDigest leaves checkedAt unset on a fetch failure, 
 
   const [state] = await db.select().from(syncState);
   expect(state?.postingScheduleCheckedAt ?? null).toBeNull();
+});
+
+const NOW_FOR_DUE_SOON = new Date("2026-10-18T04:00:00.000Z");
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+async function insertTodoDueIn(ms: number) {
+  const [task] = await db
+    .insert(tasks)
+    .values({
+      type: "todo",
+      title: "Send invoice",
+      status: "active",
+      dueAt: new Date(NOW_FOR_DUE_SOON.getTime() + ms),
+    })
+    .returning();
+  return task;
+}
+
+test("checkUpcomingDueTodos sends the 1-day heads-up for a to-do due in 12 hours", async () => {
+  await insertTodoDueIn(12 * HOUR_MS);
+
+  const result = await checkUpcomingDueTodos(NOW_FOR_DUE_SOON);
+
+  expect(result).toEqual({ notified: 1 });
+  expect(sendPushMock).toHaveBeenCalledTimes(1);
+  expect(sendPushMock.mock.calls[0][1]).toMatchObject({ title: "Due tomorrow", body: "Send invoice" });
+});
+
+test("checkUpcomingDueTodos sends only the 3-day heads-up (not also week-ahead) for a to-do due in 2 days — bands are mutually exclusive", async () => {
+  await insertTodoDueIn(2 * DAY_MS);
+
+  const result = await checkUpcomingDueTodos(NOW_FOR_DUE_SOON);
+
+  expect(result).toEqual({ notified: 1 });
+  expect(sendPushMock).toHaveBeenCalledTimes(1);
+  expect(sendPushMock.mock.calls[0][1]).toMatchObject({ title: "Due in 3 days" });
+});
+
+test("checkUpcomingDueTodos sends the 1-week heads-up for a to-do due in 5 days", async () => {
+  await insertTodoDueIn(5 * DAY_MS);
+
+  const result = await checkUpcomingDueTodos(NOW_FOR_DUE_SOON);
+
+  expect(result).toEqual({ notified: 1 });
+  expect(sendPushMock.mock.calls[0][1]).toMatchObject({ title: "Due in 1 week" });
+});
+
+test("checkUpcomingDueTodos sends nothing for a to-do due in 10 days — outside every band", async () => {
+  await insertTodoDueIn(10 * DAY_MS);
+
+  const result = await checkUpcomingDueTodos(NOW_FOR_DUE_SOON);
+
+  expect(result).toEqual({ notified: 0 });
+  expect(sendPushMock).not.toHaveBeenCalled();
+});
+
+test("checkUpcomingDueTodos sends nothing for a to-do that's already overdue", async () => {
+  await insertTodoDueIn(-HOUR_MS);
+
+  const result = await checkUpcomingDueTodos(NOW_FOR_DUE_SOON);
+
+  expect(result).toEqual({ notified: 0 });
+  expect(sendPushMock).not.toHaveBeenCalled();
+});
+
+test("checkUpcomingDueTodos does not re-send a band that already fired", async () => {
+  const task = await insertTodoDueIn(12 * HOUR_MS);
+  await db.update(tasks).set({ dueOneDayNotifiedAt: NOW_FOR_DUE_SOON }).where(eq(tasks.id, task.id));
+
+  const result = await checkUpcomingDueTodos(NOW_FOR_DUE_SOON);
+
+  expect(result).toEqual({ notified: 0 });
+  expect(sendPushMock).not.toHaveBeenCalled();
+});
+
+test("checkUpcomingDueTodos ignores a to-do with no due date", async () => {
+  await db.insert(tasks).values({ type: "todo", title: "No due date", status: "active" });
+
+  const result = await checkUpcomingDueTodos(NOW_FOR_DUE_SOON);
+
+  expect(result).toEqual({ notified: 0 });
+  expect(sendPushMock).not.toHaveBeenCalled();
+});
+
+test("checkUpcomingDueTodos ignores a completed to-do even if its due date is in a band", async () => {
+  await db.insert(tasks).values({
+    type: "todo",
+    title: "Already done",
+    status: "completed",
+    completedAt: NOW_FOR_DUE_SOON,
+    dueAt: new Date(NOW_FOR_DUE_SOON.getTime() + 12 * HOUR_MS),
+  });
+
+  const result = await checkUpcomingDueTodos(NOW_FOR_DUE_SOON);
+
+  expect(result).toEqual({ notified: 0 });
+  expect(sendPushMock).not.toHaveBeenCalled();
+});
+
+test("checkUpcomingDueTodos fires the 3-day band, then later the 1-day band, for the same to-do as time passes", async () => {
+  const task = await insertTodoDueIn(2 * DAY_MS); // created 2 days before due
+
+  const first = await checkUpcomingDueTodos(NOW_FOR_DUE_SOON);
+  expect(first).toEqual({ notified: 1 });
+  sendPushMock.mockClear();
+
+  const oneDayLater = new Date(NOW_FOR_DUE_SOON.getTime() + DAY_MS + HOUR_MS); // now ~23h from due
+  const second = await checkUpcomingDueTodos(oneDayLater);
+
+  expect(second).toEqual({ notified: 1 });
+  expect(sendPushMock.mock.calls[0][1]).toMatchObject({ title: "Due tomorrow" });
+
+  const [row] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+  expect(row.dueThreeDayNotifiedAt).not.toBeNull();
+  expect(row.dueOneDayNotifiedAt).not.toBeNull();
 });

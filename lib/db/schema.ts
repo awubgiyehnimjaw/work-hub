@@ -58,6 +58,13 @@ export const tasks = pgTable("tasks", {
   // been sent, so the reminder check (every 15 min) doesn't re-notify the
   // same to-do every run after it becomes due.
   dueNotifiedAt: timestamp("due_notified_at"),
+  // Advance heads-up pushes ("due in 1 week/3 days/tomorrow"), each a
+  // one-shot flag exactly like dueNotifiedAt but for its own threshold —
+  // a to-do due in 2 days only ever needed the 3-day and 1-day columns,
+  // never the week-ahead one, so these can't share a single flag.
+  dueWeekAheadNotifiedAt: timestamp("due_week_ahead_notified_at"),
+  dueThreeDayNotifiedAt: timestamp("due_three_day_notified_at"),
+  dueOneDayNotifiedAt: timestamp("due_one_day_notified_at"),
 });
 
 export const contentIdeas = pgTable("content_ideas", {

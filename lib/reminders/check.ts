@@ -1,4 +1,5 @@
-import { and, eq, gte, isNotNull, isNull, lte } from "drizzle-orm";
+import { and, eq, gt, gte, isNotNull, isNull, lte } from "drizzle-orm";
+import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db/client";
 import { calendarEventsCache, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
 import { sendPush } from "@/lib/push/send";
@@ -71,6 +72,94 @@ export async function checkDueTodos(now: Date): Promise<{ notified: number }> {
   }
 
   return { notified: candidates.length };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type DueSoonColumnKey = "dueOneDayNotifiedAt" | "dueThreeDayNotifiedAt" | "dueWeekAheadNotifiedAt";
+
+// Each column has the exact same runtime shape (a nullable timestamp on
+// `tasks`), but Drizzle's generated type for each one carries its own
+// literal column name, so a single precise type can't cover all three —
+// `PgColumn` (its own type parameter left to infer loosely) is the
+// deliberately-widened type this map needs.
+const dueSoonColumns: Record<DueSoonColumnKey, PgColumn> = {
+  dueOneDayNotifiedAt: tasks.dueOneDayNotifiedAt,
+  dueThreeDayNotifiedAt: tasks.dueThreeDayNotifiedAt,
+  dueWeekAheadNotifiedAt: tasks.dueWeekAheadNotifiedAt,
+};
+
+interface DueSoonBand {
+  label: string;
+  // Time-until-due must fall in (minMs, maxMs] for this band — exclusive
+  // lower bound, inclusive upper — so the three bands partition "not yet
+  // due" time cleanly with no overlap and no gap.
+  minMs: number;
+  maxMs: number;
+  columnKey: DueSoonColumnKey;
+}
+
+const DUE_SOON_BANDS: DueSoonBand[] = [
+  { label: "Due tomorrow", minMs: 0, maxMs: DAY_MS, columnKey: "dueOneDayNotifiedAt" },
+  { label: "Due in 3 days", minMs: DAY_MS, maxMs: 3 * DAY_MS, columnKey: "dueThreeDayNotifiedAt" },
+  { label: "Due in 1 week", minMs: 3 * DAY_MS, maxMs: 7 * DAY_MS, columnKey: "dueWeekAheadNotifiedAt" },
+];
+
+async function checkDueSoonBand(now: Date, band: DueSoonBand): Promise<number> {
+  const column = dueSoonColumns[band.columnKey];
+  const lowerBound = new Date(now.getTime() + band.minMs);
+  const upperBound = new Date(now.getTime() + band.maxMs);
+
+  const candidates = await db
+    .select()
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.type, "todo"),
+        eq(tasks.status, "active"),
+        isNotNull(tasks.dueAt),
+        gt(tasks.dueAt, lowerBound),
+        lte(tasks.dueAt, upperBound),
+        isNull(column),
+      ),
+    );
+
+  if (candidates.length === 0) {
+    return 0;
+  }
+
+  const subscriptions = await db.select().from(pushSubscriptions);
+
+  for (const task of candidates) {
+    for (const subscription of subscriptions) {
+      await sendPush(
+        { endpoint: subscription.endpoint, p256dh: subscription.p256dh, auth: subscription.auth },
+        { title: band.label, body: task.title, url: "" },
+      );
+    }
+    await db.update(tasks).set({ [band.columnKey]: now }).where(eq(tasks.id, task.id));
+  }
+
+  return candidates.length;
+}
+
+/**
+ * Advance heads-up pushes for an upcoming to-do due date — due within 1
+ * day, within 3 days, or within 1 week — each firing at most once per
+ * to-do via its own `tasks.due*NotifiedAt` column. Bands are mutually
+ * exclusive (checked against time-remaining-until-due, not a cumulative
+ * "within N days" threshold), so a to-do created with 2 days left gets
+ * exactly the "due in 3 days" heads-up once rather than also a misleading
+ * "due in 1 week" notice on the same tick — and a to-do that exists long
+ * enough naturally progresses through all three as each one's moment
+ * arrives, same as `checkDueTodos` then covers the moment it's actually due.
+ */
+export async function checkUpcomingDueTodos(now: Date): Promise<{ notified: number }> {
+  let total = 0;
+  for (const band of DUE_SOON_BANDS) {
+    total += await checkDueSoonBand(now, band);
+  }
+  return { notified: total };
 }
 
 async function getSyncStateRow() {
