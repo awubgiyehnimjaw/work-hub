@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import QuickAddButton from "./QuickAddButton";
+import { classifyDueStatus, type DueStatus } from "@/lib/tasks/due-status";
 
 export interface TodoTask {
   id: string;
@@ -22,9 +23,24 @@ const dueDateFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 
-function formatDue(dueAt: string): { label: string; overdue: boolean } {
-  const due = new Date(dueAt);
-  return { label: dueDateFormatter.format(due), overdue: due.getTime() < Date.now() };
+function formatDue(dueAt: string): string {
+  return dueDateFormatter.format(new Date(dueAt));
+}
+
+// Card border/background per DueStatus band — overdue is handled separately
+// via the .todo-overdue class (rainbow gradient border), since a gradient
+// can't be expressed as a plain inline border color.
+function dueCardStyle(status: DueStatus): { border: string; backgroundColor: string } {
+  switch (status) {
+    case "red":
+      return { border: "1px solid var(--color-danger-border)", backgroundColor: "var(--color-danger-bg)" };
+    case "yellow":
+      return { border: "1px solid var(--color-warning-border)", backgroundColor: "var(--color-warning-bg)" };
+    case "green":
+      return { border: "1px solid var(--color-success-border)", backgroundColor: "var(--color-success-bg)" };
+    default:
+      return { border: "1px solid var(--color-border)", backgroundColor: "var(--color-surface)" };
+  }
 }
 
 export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
@@ -62,17 +78,21 @@ export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
         >
           {tasks.map((task) => {
             const isBusy = busyId === task.id;
-            const due = task.dueAt ? formatDue(task.dueAt) : null;
+            const dueLabel = task.dueAt ? formatDue(task.dueAt) : null;
+            const dueStatus = task.dueAt ? classifyDueStatus(new Date(task.dueAt), new Date()) : null;
+            const overdue = dueStatus === "overdue";
+            const cardStyle = dueCardStyle(dueStatus);
             return (
               <li
                 key={task.id}
+                className={overdue ? "todo-overdue" : undefined}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: 8,
-                  border: due?.overdue ? "1px solid var(--color-danger-border)" : "1px solid var(--color-border)",
-                  backgroundColor: due?.overdue ? "var(--color-danger-bg)" : "var(--color-surface)",
+                  border: overdue ? undefined : cardStyle.border,
+                  backgroundColor: overdue ? undefined : cardStyle.backgroundColor,
                   borderRadius: 10,
                   padding: "10px 12px",
                   boxShadow: "var(--shadow-card)",
@@ -80,17 +100,17 @@ export default function TodoList({ tasks, onAdd, onComplete }: TodoListProps) {
               >
                 <div>
                   <span style={{ fontSize: 15 }}>{task.title}</span>
-                  {due ? (
+                  {dueLabel ? (
                     <div
                       style={{
                         fontSize: 12,
                         marginTop: 2,
-                        color: due.overdue ? "var(--color-danger)" : "var(--color-text-muted)",
-                        fontWeight: due.overdue ? 600 : 400,
+                        color: overdue ? "var(--color-danger)" : "var(--color-text-muted)",
+                        fontWeight: overdue ? 600 : 400,
                       }}
                     >
-                      {due.overdue ? "Overdue — " : "Due "}
-                      {due.label}
+                      {overdue ? "Overdue — " : "Due "}
+                      {dueLabel}
                     </div>
                   ) : null}
                 </div>

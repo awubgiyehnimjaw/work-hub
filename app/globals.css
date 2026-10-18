@@ -14,7 +14,11 @@
   --color-danger-border: #f3b4ab;
   --color-success: #16a34a;
   --color-success-hover: #15803d;
+  --color-success-bg: #f0fdf4;
+  --color-success-border: #86efac;
   --color-warning: #92400e;
+  --color-warning-bg: #fefce8;
+  --color-warning-border: #fcd34d;
   --color-accent-bg: #eef2ff;
   --color-accent-border: #c7d2fe;
   --color-accent-text: #3730a3;
@@ -39,7 +43,11 @@
     --color-danger-border: rgba(248, 113, 113, 0.4);
     --color-success: #4ade80;
     --color-success-hover: #86efac;
+    --color-success-bg: rgba(74, 222, 128, 0.12);
+    --color-success-border: rgba(74, 222, 128, 0.4);
     --color-warning: #fbbf24;
+    --color-warning-bg: rgba(251, 191, 36, 0.12);
+    --color-warning-border: rgba(251, 191, 36, 0.4);
     --color-accent-bg: rgba(99, 102, 241, 0.14);
     --color-accent-border: rgba(99, 102, 241, 0.35);
     --color-accent-text: #a5b4fc;
@@ -98,4 +106,15 @@ textarea {
 }
 .interactive:disabled:hover {
   filter: none;
+}
+
+/* Overdue to-dos get a rainbow-gradient border instead of a flat danger
+   color — the two background-image layers trick gives a gradient border
+   while keeping a normal, readable surface-colored interior. */
+.todo-overdue {
+  border: 2px solid transparent;
+  background-image: linear-gradient(var(--color-surface), var(--color-surface)),
+    linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #3b82f6, #8b5cf6, #ec4899);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
 }
