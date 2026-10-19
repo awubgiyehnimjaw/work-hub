@@ -493,7 +493,7 @@ An `InvoiceDocument` component (`Document`/`Page`/`View`/`Text`/`Image` from `@r
   ```
   then, as a labeled two-column block: "Invoice Date" → `formatInvoiceDateShort(invoice.invoiceDate)`; "Invoice No" → `invoice.invoiceNumber`; "Attention" → `invoice.clientAttention`.
 - Below the logo/letterhead: the address block — `invoice.clientLegalName`, `invoice.clientAddressLine1`, and `invoice.clientAddressLine2` (only rendered when not null).
-- A table with header "Description | Tax | Amount (SGD)" and one row: description `Service Fees - ${formatServiceMonthLabel(invoice.invoiceDate)}`, with `*${invoice.description}` on the line beneath it (only rendered when `invoice.description` is not null/empty), tax column "No Tax", amount column `$ ${formatAmountSgd(invoice.totalAmountCents)}`. Then a "Total (SGD)" row with the same amount.
+- A table with header "Description | Tax | Amount (SGD)" and one row: description `Service Fees - ${formatServiceMonthLabel(invoice.invoiceDate)}`, with `invoice.description` rendered **verbatim, with no prepended asterisk**, on the line beneath it (only rendered when `invoice.description` is not null/empty). Callum types the whole sub-line himself (including any leading "*" he wants, matching the sample's "*8 Content Posts" style) — the stored value is shown exactly as typed, never templated. Tax column "No Tax", amount column `$ ${formatAmountSgd(invoice.totalAmountCents)}`. Then a "Total (SGD)" row with the same amount.
 - "Due Date: " + `formatDueDateLong(invoice.dueDate)`, then "Payment to be remitted to:" and exactly:
   ```
   Bank Name: OCBC BANK LTD
