@@ -64,6 +64,13 @@
       "when": 1792417025091,
       "tag": "0008_add_posting_schedule_completions",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792424296923,
+      "tag": "0009_add_client_billing_fields",
+      "breakpoints": true
     }
   ]
 }

@@ -26,6 +26,15 @@ export const clients = pgTable("clients", {
   displayName: text("display_name").notNull(),
   recognized: boolean("recognized").notNull(),
   lastActivityAt: timestamp("last_activity_at"),
+  // Billing-profile fields for invoice generation: the client's legal
+  // company name and mailing address. Nullable because most clients don't
+  // need an invoice generated against them — downstream code checks
+  // `legalName && addressLine1` to decide whether a client is eligible to
+  // appear in the invoice-creation dropdown.
+  legalName: text("legal_name"),
+  addressLine1: text("address_line1"),
+  addressLine2: text("address_line2"),
+  attention: text("attention"),
 });
 
 export const tasks = pgTable("tasks", {

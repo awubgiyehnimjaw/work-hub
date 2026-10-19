@@ -8,6 +8,10 @@ interface Client {
   displayName: string;
   recognized: boolean;
   lastActivityAt: string | null;
+  legalName: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  attention: string | null;
 }
 
 interface ClientStats {
@@ -65,6 +69,10 @@ export default function ClientsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTag, setEditTag] = useState("");
   const [editDisplayName, setEditDisplayName] = useState("");
+  const [editLegalName, setEditLegalName] = useState("");
+  const [editAddressLine1, setEditAddressLine1] = useState("");
+  const [editAddressLine2, setEditAddressLine2] = useState("");
+  const [editAttention, setEditAttention] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -128,6 +136,10 @@ export default function ClientsPage() {
     setEditingId(client.id);
     setEditTag(client.tag);
     setEditDisplayName(client.displayName);
+    setEditLegalName(client.legalName ?? "");
+    setEditAddressLine1(client.addressLine1 ?? "");
+    setEditAddressLine2(client.addressLine2 ?? "");
+    setEditAttention(client.attention ?? "");
     setRowError(null);
   }
 
@@ -167,7 +179,14 @@ export default function ClientsPage() {
     if (!tag || !displayName) {
       return;
     }
-    const ok = await patchClient(id, { tag, displayName });
+    const ok = await patchClient(id, {
+      tag,
+      displayName,
+      legalName: editLegalName.trim(),
+      addressLine1: editAddressLine1.trim(),
+      addressLine2: editAddressLine2.trim(),
+      attention: editAttention.trim(),
+    });
     if (ok) {
       setEditingId(null);
     }
@@ -403,13 +422,41 @@ export default function ClientsPage() {
                           autoFocus
                           style={{ ...inputStyle, width: "100%" }}
                         />
+                        <input
+                          type="text"
+                          value={editDisplayName}
+                          onChange={(event) => setEditDisplayName(event.target.value)}
+                          style={{ ...inputStyle, width: "100%" }}
+                        />
+                        <input
+                          type="text"
+                          value={editLegalName}
+                          onChange={(event) => setEditLegalName(event.target.value)}
+                          placeholder="Legal company name (for invoices)"
+                          style={{ ...inputStyle, width: "100%" }}
+                        />
+                        <input
+                          type="text"
+                          value={editAddressLine1}
+                          onChange={(event) => setEditAddressLine1(event.target.value)}
+                          placeholder="Address line 1"
+                          style={{ ...inputStyle, width: "100%" }}
+                        />
+                        <input
+                          type="text"
+                          value={editAddressLine2}
+                          onChange={(event) => setEditAddressLine2(event.target.value)}
+                          placeholder="Address line 2"
+                          style={{ ...inputStyle, width: "100%" }}
+                        />
+                        <input
+                          type="text"
+                          value={editAttention}
+                          onChange={(event) => setEditAttention(event.target.value)}
+                          placeholder="Attention (optional)"
+                          style={{ ...inputStyle, width: "100%" }}
+                        />
                         <div style={{ display: "flex", gap: 8 }}>
-                          <input
-                            type="text"
-                            value={editDisplayName}
-                            onChange={(event) => setEditDisplayName(event.target.value)}
-                            style={{ ...inputStyle, flex: 1 }}
-                          />
                           <button
                             type="button"
                             onClick={() => saveEdit(client.id)}

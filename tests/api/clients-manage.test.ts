@@ -169,6 +169,22 @@ test("DELETE /api/clients/:id returns 409 instead of crashing when the client st
   expect(rows).toHaveLength(1);
 });
 
+test("PATCH /api/clients/[id] updates the billing fields", async () => {
+  const [client] = await db.insert(clients).values({ tag: "billing-test", displayName: "Billing Test", recognized: true, lastActivityAt: null }).returning();
+
+  const res = await PATCH(
+    patchRequest({ legalName: "BILLING TEST PTE LTD", addressLine1: "1 Test Road", addressLine2: "#01-01, Singapore 000000", attention: "Finance" }),
+    context(client.id),
+  );
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.legalName).toBe("BILLING TEST PTE LTD");
+  expect(body.addressLine1).toBe("1 Test Road");
+  expect(body.addressLine2).toBe("#01-01, Singapore 000000");
+  expect(body.attention).toBe("Finance");
+});
+
 test("GET /api/clients/stats returns a stats row per client, sorted by display name", async () => {
   const [c1] = await db
     .insert(clients)

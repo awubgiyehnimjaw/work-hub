@@ -8,13 +8,18 @@ interface PatchPayload {
   tag?: string;
   displayName?: string;
   recognized?: boolean;
+  legalName?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  attention?: string;
 }
 
 function parsePatchPayload(body: unknown): PatchPayload | null {
   if (typeof body !== "object" || body === null) {
     return null;
   }
-  const { tag, displayName, recognized } = body as Record<string, unknown>;
+  const { tag, displayName, recognized, legalName, addressLine1, addressLine2, attention } =
+    body as Record<string, unknown>;
   const update: PatchPayload = {};
 
   if (tag !== undefined) {
@@ -35,6 +40,30 @@ function parsePatchPayload(body: unknown): PatchPayload | null {
     }
     update.recognized = recognized;
   }
+  if (legalName !== undefined) {
+    if (typeof legalName !== "string") {
+      return null;
+    }
+    update.legalName = legalName.trim();
+  }
+  if (addressLine1 !== undefined) {
+    if (typeof addressLine1 !== "string") {
+      return null;
+    }
+    update.addressLine1 = addressLine1.trim();
+  }
+  if (addressLine2 !== undefined) {
+    if (typeof addressLine2 !== "string") {
+      return null;
+    }
+    update.addressLine2 = addressLine2.trim();
+  }
+  if (attention !== undefined) {
+    if (typeof attention !== "string") {
+      return null;
+    }
+    update.attention = attention.trim();
+  }
 
   if (Object.keys(update).length === 0) {
     return null;
@@ -52,7 +81,10 @@ export async function PATCH(
   const payload = parsePatchPayload(body);
   if (!payload) {
     return NextResponse.json(
-      { error: "Body must include at least one of { tag, displayName, recognized }" },
+      {
+        error:
+          "Body must include at least one of { tag, displayName, recognized, legalName, addressLine1, addressLine2, attention }",
+      },
       { status: 400 },
     );
   }
