@@ -1,10 +1,10 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { calendarEventsCache, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
+import { calendarEventsCache, postingScheduleCompletions, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
 import { checkDueTodos, checkUpcomingDueTodos, maybeSendPostingScheduleDigest, maybeSendWeeklyDigest } from "@/lib/reminders/check";
 import { sendPush } from "@/lib/push/send";
-import { fetchPostingScheduleCsv } from "@/lib/posting-schedule/sheet";
+import { entryKey, fetchPostingScheduleCsv } from "@/lib/posting-schedule/sheet";
 
 vi.mock("@/lib/push/send", () => ({
   sendPush: vi.fn().mockResolvedValue(undefined),
@@ -23,6 +23,7 @@ beforeEach(async () => {
   await db.delete(calendarEventsCache);
   await db.delete(syncState);
   await db.delete(pushSubscriptions);
+  await db.delete(postingScheduleCompletions);
   sendPushMock.mockClear();
   fetchPostingScheduleCsvMock.mockReset();
 
@@ -184,7 +185,7 @@ test("maybeSendPostingScheduleDigest does nothing outside the daily check window
   expect(fetchPostingScheduleCsvMock).not.toHaveBeenCalled();
 });
 
-test("maybeSendPostingScheduleDigest sends a push listing everything due within 2 days", async () => {
+test("maybeSendPostingScheduleDigest sends a push listing everything due within 3 days", async () => {
   fetchPostingScheduleCsvMock.mockResolvedValue(SAMPLE_CSV);
 
   const result = await maybeSendPostingScheduleDigest(MORNING_IN_WINDOW);
@@ -202,6 +203,31 @@ test("maybeSendPostingScheduleDigest sends a push listing everything due within 
 
   const [state] = await db.select().from(syncState);
   expect(state.postingScheduleCheckedAt).not.toBeNull();
+});
+
+test("maybeSendPostingScheduleDigest keeps listing an overdue entry until it's marked done", async () => {
+  fetchPostingScheduleCsvMock.mockResolvedValue(
+    ["Client,Video,Edit By,Post Date,Notes,Posted", "That Place,Late Video,10 Oct 2026,10 Oct 2026,,"].join("\n"),
+  );
+
+  const result = await maybeSendPostingScheduleDigest(MORNING_IN_WINDOW);
+
+  expect(result).toEqual({ sent: true });
+  const body = sendPushMock.mock.calls[0][1].body;
+  expect(body).toContain("Late Video");
+  expect(body).toContain("overdue by 6 days");
+});
+
+test("maybeSendPostingScheduleDigest skips an entry already marked done via the Done button", async () => {
+  fetchPostingScheduleCsvMock.mockResolvedValue(SAMPLE_CSV);
+  await db.insert(postingScheduleCompletions).values({
+    entryKey: entryKey({ client: "That Place", video: "Creme Brulee Latte", postDate: "2026-10-16" }),
+  });
+
+  const result = await maybeSendPostingScheduleDigest(MORNING_IN_WINDOW);
+
+  expect(result).toEqual({ sent: true });
+  expect(sendPushMock.mock.calls[0][1].body).not.toContain("Creme Brulee Latte");
 });
 
 test("maybeSendPostingScheduleDigest sends nothing, but still marks checked, when nothing is due soon", async () => {

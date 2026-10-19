@@ -1,9 +1,15 @@
 import { and, eq, gt, gte, isNotNull, isNull, lte } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db/client";
-import { calendarEventsCache, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
+import { calendarEventsCache, postingScheduleCompletions, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
 import { sendPush } from "@/lib/push/send";
-import { fetchPostingScheduleCsv, filterDueSoon, parsePostingScheduleCsv, sgtDateKey } from "@/lib/posting-schedule/sheet";
+import {
+  fetchPostingScheduleCsv,
+  filterByNotCompleted,
+  filterDueSoon,
+  parsePostingScheduleCsv,
+  sgtDateKey,
+} from "@/lib/posting-schedule/sheet";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
@@ -245,13 +251,17 @@ function describeDueDate(postDateKey: string, todayKey: string): string {
   );
   if (diffDays === 0) return "today";
   if (diffDays === 1) return "tomorrow";
+  if (diffDays === -1) return "overdue by 1 day";
+  if (diffDays < 0) return `overdue by ${-diffDays} days`;
   return `in ${diffDays} days`;
 }
 
 /**
  * Sends a "what's due to post soon" push once a day, in the 09:00 SGT
- * window, listing every posting-schedule entry due within the next 2
- * days. Silent (but still marks the day checked) when nothing is due —
+ * window, listing every posting-schedule entry due within the next 3
+ * days — and keeps listing an entry every day once it's overdue, until
+ * Callum presses "Done" on it in the app (`postingScheduleCompletions`).
+ * Silent (but still marks the day checked) when nothing is due —
  * unlike the weekly digest, a daily "nothing to post" push would just be
  * noise. `postingScheduleCheckedAt` is only updated on a successful
  * check (found something or not) — a fetch failure leaves it unset so
@@ -279,6 +289,9 @@ export async function maybeSendPostingScheduleDigest(now: Date): Promise<{ sent:
     console.error("maybeSendPostingScheduleDigest: failed to fetch/parse the posting schedule", error);
     return { sent: false };
   }
+
+  const completions = await db.select().from(postingScheduleCompletions);
+  dueSoon = filterByNotCompleted(dueSoon, new Set(completions.map((row) => row.entryKey)));
 
   await db.update(syncState).set({ postingScheduleCheckedAt: now }).where(eq(syncState.id, state.id));
 

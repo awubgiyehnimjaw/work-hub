@@ -134,3 +134,13 @@ export const telegramUpdates = pgTable("telegram_updates", {
   updateId: integer("update_id").primaryKey(),
   processedAt: timestamp("processed_at").notNull().defaultNow(),
 });
+
+// Tracks posting-schedule entries Callum has pressed "Done" on. The sheet
+// itself is read-only (CSV export, no OAuth write scope) and has no id
+// column, so `entryKey` (lib/posting-schedule/sheet.ts's `entryKey`,
+// derived from client+video+postDate) is used directly as the primary key —
+// same pattern as `telegramUpdates.updateId` above.
+export const postingScheduleCompletions = pgTable("posting_schedule_completions", {
+  entryKey: text("entry_key").primaryKey(),
+  completedAt: timestamp("completed_at").notNull().defaultNow(),
+});

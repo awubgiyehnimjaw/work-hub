@@ -1,5 +1,13 @@
 import { expect, test } from "vitest";
-import { filterDueSoon, parsePostingScheduleCsv, sgtDateKey, type PostingScheduleEntry } from "@/lib/posting-schedule/sheet";
+import {
+  classifyPostingScheduleStatus,
+  entryKey,
+  filterByNotCompleted,
+  filterDueSoon,
+  parsePostingScheduleCsv,
+  sgtDateKey,
+  type PostingScheduleEntry,
+} from "@/lib/posting-schedule/sheet";
 
 const SAMPLE_CSV = [
   "Client,Video,Edit By,Post Date,Notes,Posted",
@@ -60,19 +68,24 @@ test("filterDueSoon includes an entry due today", () => {
   expect(result).toHaveLength(1);
 });
 
-test("filterDueSoon includes an entry due exactly 2 days from now", () => {
-  const result = filterDueSoon([entry({ postDate: "2026-10-18" })], NOW);
+test("filterDueSoon includes an entry due exactly 3 days from now", () => {
+  const result = filterDueSoon([entry({ postDate: "2026-10-19" })], NOW);
   expect(result).toHaveLength(1);
 });
 
-test("filterDueSoon excludes an entry due 3 days from now", () => {
-  const result = filterDueSoon([entry({ postDate: "2026-10-19" })], NOW);
+test("filterDueSoon excludes an entry due 4 days from now", () => {
+  const result = filterDueSoon([entry({ postDate: "2026-10-20" })], NOW);
   expect(result).toHaveLength(0);
 });
 
-test("filterDueSoon excludes an entry whose post date has already passed", () => {
+test("filterDueSoon includes an entry whose post date has already passed — overdue entries stay until marked done", () => {
   const result = filterDueSoon([entry({ postDate: "2026-10-15" })], NOW);
-  expect(result).toHaveLength(0);
+  expect(result).toHaveLength(1);
+});
+
+test("filterDueSoon includes an entry far in the past just as readily — no auto-expiry on overdue entries", () => {
+  const result = filterDueSoon([entry({ postDate: "2026-09-01" })], NOW);
+  expect(result).toHaveLength(1);
 });
 
 test("filterDueSoon excludes an entry with no post date at all", () => {
@@ -93,4 +106,44 @@ test("filterDueSoon excludes an entry marked HOLD (case-insensitive) even if the
 test("filterDueSoon includes an entry with unrelated notes text", () => {
   const result = filterDueSoon([entry({ postDate: "2026-10-16", notes: "needs thumbnail" })], NOW);
   expect(result).toHaveLength(1);
+});
+
+test("entryKey combines client, video, and post date into a stable string", () => {
+  expect(entryKey(entry({ client: "That Place", video: "Montage", postDate: "2026-10-20" }))).toBe(
+    "That Place|Montage|2026-10-20",
+  );
+});
+
+test("entryKey still produces a key when postDate is null", () => {
+  expect(entryKey(entry({ client: "That Place", video: "Montage", postDate: null }))).toBe("That Place|Montage|");
+});
+
+test("filterByNotCompleted drops an entry whose key is in the completed set", () => {
+  const a = entry({ client: "A", video: "Vid A", postDate: "2026-10-16" });
+  const b = entry({ client: "B", video: "Vid B", postDate: "2026-10-17" });
+  const result = filterByNotCompleted([a, b], new Set([entryKey(a)]));
+  expect(result).toEqual([b]);
+});
+
+test("filterByNotCompleted keeps everything when the completed set is empty", () => {
+  const a = entry({ client: "A", video: "Vid A", postDate: "2026-10-16" });
+  const result = filterByNotCompleted([a], new Set());
+  expect(result).toEqual([a]);
+});
+
+test("classifyPostingScheduleStatus returns red for an entry due today", () => {
+  expect(classifyPostingScheduleStatus("2026-10-16", "2026-10-16")).toBe("red");
+});
+
+test("classifyPostingScheduleStatus returns red for an overdue entry", () => {
+  expect(classifyPostingScheduleStatus("2026-10-10", "2026-10-16")).toBe("red");
+});
+
+test("classifyPostingScheduleStatus returns green for an entry due tomorrow", () => {
+  expect(classifyPostingScheduleStatus("2026-10-17", "2026-10-16")).toBe("green");
+});
+
+test("classifyPostingScheduleStatus returns none for an entry due 2 or 3 days out", () => {
+  expect(classifyPostingScheduleStatus("2026-10-18", "2026-10-16")).toBe("none");
+  expect(classifyPostingScheduleStatus("2026-10-19", "2026-10-16")).toBe("none");
 });

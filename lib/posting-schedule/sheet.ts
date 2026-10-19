@@ -113,20 +113,27 @@ function dateKeyToUtcMs(key: string): number {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const DUE_SOON_WINDOW_DAYS = 2;
+const DUE_SOON_WINDOW_DAYS = 3;
 
-/** Whether `postDateKey` falls within [today, today+2] calendar days, inclusive, of `todayKey`. */
+/**
+ * Whether `postDateKey` is at most 3 calendar days away from `todayKey` —
+ * no lower bound, so an entry stays "due soon" indefinitely once it's
+ * overdue. Nothing in this module ever drops an overdue entry on its own;
+ * that only happens once it's marked DONE/HOLD in the sheet or completed
+ * via `filterByNotCompleted` (Callum's "Done" button in the app).
+ */
 function isDueSoon(postDateKey: string, todayKey: string): boolean {
   const diffDays = (dateKeyToUtcMs(postDateKey) - dateKeyToUtcMs(todayKey)) / DAY_MS;
-  return diffDays >= 0 && diffDays <= DUE_SOON_WINDOW_DAYS;
+  return diffDays <= DUE_SOON_WINDOW_DAYS;
 }
 
 const SKIPPED_NOTES = new Set(["done", "hold"]);
 
 /**
- * Entries with a Post Date within the next 2 days (Callum's own calendar,
- * not UTC's), excluding anything already marked "DONE" or put on "HOLD" —
- * the only two statuses this sheet's Notes column is actually used for.
+ * Entries with a Post Date at most 3 days out (Callum's own calendar, not
+ * UTC's) — including anything already overdue, since those stay visible
+ * until explicitly completed — excluding anything already marked "DONE"
+ * or put on "HOLD" in the sheet's Notes column.
  */
 export function filterDueSoon(entries: PostingScheduleEntry[], now: Date): PostingScheduleEntry[] {
   const todayKey = sgtDateKey(now);
@@ -139,4 +146,36 @@ export function filterDueSoon(entries: PostingScheduleEntry[], now: Date): Posti
     }
     return isDueSoon(entry.postDate, todayKey);
   });
+}
+
+/**
+ * A stable identity for a sheet row, since the sheet itself has no id
+ * column — used as the primary key in `postingScheduleCompletions` so
+ * pressing "Done" in the app can be remembered without writing back to
+ * the (read-only, CSV-exported) sheet.
+ */
+export function entryKey(entry: Pick<PostingScheduleEntry, "client" | "video" | "postDate">): string {
+  return `${entry.client}|${entry.video}|${entry.postDate ?? ""}`;
+}
+
+/** Drops any entry whose `entryKey` is in `completedKeys`. */
+export function filterByNotCompleted(
+  entries: PostingScheduleEntry[],
+  completedKeys: ReadonlySet<string>,
+): PostingScheduleEntry[] {
+  return entries.filter((entry) => !completedKeys.has(entryKey(entry)));
+}
+
+export type PostingScheduleStatus = "none" | "green" | "red";
+
+/**
+ * Urgency color for a posting-schedule card: red once due (today or
+ * overdue), green the day before, and no color further out — the same
+ * 3-day "due soon" window this module filters to, just split into bands.
+ */
+export function classifyPostingScheduleStatus(postDateKey: string, todayKey: string): PostingScheduleStatus {
+  const diffDays = (dateKeyToUtcMs(postDateKey) - dateKeyToUtcMs(todayKey)) / DAY_MS;
+  if (diffDays <= 0) return "red";
+  if (diffDays === 1) return "green";
+  return "none";
 }
