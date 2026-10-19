@@ -19,6 +19,19 @@ const nextConfig: NextConfig = {
   // Next load it via a plain `require()` at runtime instead, same as
   // pglite.
   serverExternalPackages: ["@electric-sql/pglite", "@react-pdf/renderer"],
+  // lib/invoices/pdf.tsx reads public/invoice/logo.png and
+  // public/invoice/paynow-qr.png at runtime via plain `fs` reads
+  // (`path.resolve(process.cwd(), ...)`), not a static import or
+  // `<Image>` component. Vercel's file-tracing (`@vercel/nft`) determines
+  // which files get bundled into each serverless function by statically
+  // analyzing the code, and a runtime-constructed path string isn't
+  // always picked up — so without this, the PDF download route could
+  // work in `next dev`/`next build` locally (where the whole repo is on
+  // disk) but 404/throw on Vercel when those two PNGs aren't included in
+  // its function's deployment bundle. This explicitly forces them in.
+  outputFileTracingIncludes: {
+    "/api/invoices/[id]/pdf": ["./public/invoice/**"],
+  },
 };
 
 export default nextConfig;

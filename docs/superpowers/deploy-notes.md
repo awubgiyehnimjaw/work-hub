@@ -166,10 +166,33 @@ runs (or this command does), `/api/suggestions` is still broken.
 
 ### 4.2 Backfill client billing profiles and the October 2026 invoices
 
-**Do this once**, after this Invoices feature's migrations (the ones
-adding `legalName`/`addressLine1`/`addressLine2`/`attention` to `clients`
-and creating the `invoices` table) have been applied to production per
-§4 above:
+**This has a required run order — follow it exactly, in this sequence:**
+
+1. Apply migrations `0009` and `0010` to production (`npx drizzle-kit
+   migrate`, per §4 above) — safe to do *before* deploying the new
+   Invoices code, since both are purely additive (new nullable columns on
+   `clients`, new `invoices` table). Several existing code paths
+   (`GET /api/clients/all`, `createInvoice`, the Frame.io poller, the seed
+   script) select these new `clients` columns unconditionally — if the new
+   code deploys before these migrations are applied, those break
+   immediately with "column does not exist" errors.
+2. Deploy the new code.
+3. Run the backfill once against production (command below).
+4. **Before generating any real invoice through the app**, verify both
+   `ARC2610-001` and `ARC2610-002` now exist — e.g. open `/invoices` in
+   the deployed app and confirm both appear in the list, or query the
+   `invoices` table directly. Generating a real invoice before this step
+   completes risks a real numbering collision: the app would compute
+   `ARC2610-001` for whatever client is picked first, colliding with the
+   real external "That Place" invoice already sent with that exact
+   number, and `backfillOctoberInvoices` is written to throw a clear
+   error (rather than silently proceeding) if it later finds that number
+   claimed by something other than the expected backfill — so skipping
+   this order turns into a hard failure, not a silent one, but it's
+   simplest to just not get there.
+
+**Do this once**, after migrations `0009`/`0010` have been applied to
+production per step 1 above:
 
 ```bash
 DATABASE_URL="<your Neon connection string>" npx tsx lib/db/backfill-invoices-cli.ts
