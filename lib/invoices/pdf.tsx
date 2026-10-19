@@ -231,7 +231,7 @@ function InvoiceDocument({ invoice }: { invoice: Invoice }) {
             <View style={styles.colDescription}>
               <Text>{serviceFeesDescription}</Text>
               {invoice.description != null && invoice.description !== "" && (
-                <Text style={styles.descriptionSub}>*{invoice.description}</Text>
+                <Text style={styles.descriptionSub}>{invoice.description}</Text>
               )}
             </View>
             <Text style={styles.colTax}>No Tax</Text>
