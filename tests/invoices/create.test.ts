@@ -66,13 +66,18 @@ test("defaults clientAttention to 'Account Department' when the client has no at
 
 test("recovers from an invoiceNumber collision by retrying with the next sequence", async () => {
   const [client] = await db.insert(clients).values({ tag: "t1", displayName: "T1", recognized: true, lastActivityAt: null, ...ELIGIBLE }).returning();
-  // Simulates a pre-existing row with the number createInvoice would otherwise compute first.
+  // With exactly one pre-existing row in the target month, nextSequence's
+  // first computation is 1 (existing row count) + 1 = 2, so createInvoice's
+  // first candidate is "ARC2611-002" — pre-inserting that exact number
+  // forces a real unique-constraint collision on the first insert attempt,
+  // so the retry branch (sequence bumped to 3) is what actually produces
+  // the final "ARC2611-003" result, not an incidental pass.
   await db.insert(invoices).values({
-    invoiceNumber: "ARC2611-001", clientId: client.id, clientLegalName: "X", clientAddressLine1: "X", clientAddressLine2: null, clientAttention: "X",
+    invoiceNumber: "ARC2611-002", clientId: client.id, clientLegalName: "X", clientAddressLine1: "X", clientAddressLine2: null, clientAttention: "X",
     invoiceDate: new Date("2026-11-01T00:00:00Z"), dueDate: new Date("2026-11-08T00:00:00Z"), description: null, totalAmountCents: 1,
   });
 
   const result = await createInvoice({ clientId: client.id, description: null, totalAmountCents: 1, invoiceDate: new Date("2026-11-01T01:00:00Z") });
 
-  expect(result.ok && result.invoice.invoiceNumber).toBe("ARC2611-002");
+  expect(result.ok && result.invoice.invoiceNumber).toBe("ARC2611-003");
 });
