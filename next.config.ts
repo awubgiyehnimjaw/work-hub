@@ -9,7 +9,16 @@ const nextConfig: NextConfig = {
   // obscure "path argument must be ... URL" errors. Excluding it from
   // bundling makes Next load it via a plain `require()` at runtime
   // instead, identical to how it behaves in a non-bundled Node script.
-  serverExternalPackages: ["@electric-sql/pglite"],
+  // `@react-pdf/renderer` (used to render invoice PDFs in
+  // lib/invoices/pdf.tsx) has the same category of issue as
+  // `@electric-sql/pglite` above: its package.json maps its main entry
+  // through a `"browser"` field to a browser-only build. If webpack
+  // bundles it into the server build and picks up that mapping, the
+  // library loses the Node-native (pdfkit/fontkit) code path it needs to
+  // read font/asset files from disk. Excluding it from bundling makes
+  // Next load it via a plain `require()` at runtime instead, same as
+  // pglite.
+  serverExternalPackages: ["@electric-sql/pglite", "@react-pdf/renderer"],
 };
 
 export default nextConfig;
