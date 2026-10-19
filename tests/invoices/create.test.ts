@@ -64,6 +64,21 @@ test("defaults clientAttention to 'Account Department' when the client has no at
   expect(result.ok && result.invoice.clientAttention).toBe("Account Department");
 });
 
+test("treats a whitespace-only attention/addressLine2 on the client as missing (defense in depth)", async () => {
+  const [client] = await db.insert(clients).values({
+    tag: "t1", displayName: "T1", recognized: true, lastActivityAt: null,
+    legalName: "TEST CO PTE LTD", addressLine1: "1 Test Road", addressLine2: "   ", attention: "   ",
+  }).returning();
+
+  const result = await createInvoice({ clientId: client.id, description: null, totalAmountCents: 1 });
+
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.invoice.clientAttention).toBe("Account Department");
+    expect(result.invoice.clientAddressLine2).toBeNull();
+  }
+});
+
 test("recovers from an invoiceNumber collision by retrying with the next sequence", async () => {
   const [client] = await db.insert(clients).values({ tag: "t1", displayName: "T1", recognized: true, lastActivityAt: null, ...ELIGIBLE }).returning();
   // With exactly one pre-existing row in the target month, nextSequence's

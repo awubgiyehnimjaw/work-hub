@@ -216,7 +216,7 @@ function InvoiceDocument({ invoice }: { invoice: Invoice }) {
         <View style={styles.addressBlock}>
           <Text style={styles.addressLine}>{invoice.clientLegalName}</Text>
           <Text style={styles.addressLine}>{invoice.clientAddressLine1}</Text>
-          {invoice.clientAddressLine2 != null && (
+          {invoice.clientAddressLine2 != null && invoice.clientAddressLine2.trim() !== "" && (
             <Text style={styles.addressLine}>{invoice.clientAddressLine2}</Text>
           )}
         </View>

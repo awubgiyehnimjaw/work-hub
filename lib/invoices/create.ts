@@ -48,6 +48,16 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<CreateIn
   const invoiceDate = input.invoiceDate ?? new Date();
   const dueDate = computeDueDate(invoiceDate);
 
+  // Defense in depth: `??` only catches null/undefined, not an
+  // empty/whitespace-only string — which the Clients PATCH route should
+  // never store in the first place (it normalizes blank billing fields to
+  // null), but a blank string here must still never end up snapshotted
+  // onto a real invoice (a blank "Attention" line, or a blank address
+  // line rendered as if it were real).
+  const clientAttention = client.attention?.trim() || DEFAULT_ATTENTION;
+  const trimmedAddressLine2 = client.addressLine2?.trim();
+  const clientAddressLine2 = trimmedAddressLine2 ? trimmedAddressLine2 : null;
+
   let sequence = await nextSequence(invoiceDate);
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -60,8 +70,8 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<CreateIn
           clientId: client.id,
           clientLegalName: client.legalName,
           clientAddressLine1: client.addressLine1,
-          clientAddressLine2: client.addressLine2,
-          clientAttention: client.attention ?? DEFAULT_ATTENTION,
+          clientAddressLine2,
+          clientAttention,
           invoiceDate,
           dueDate,
           description: input.description,

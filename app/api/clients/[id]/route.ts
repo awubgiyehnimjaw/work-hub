@@ -8,10 +8,10 @@ interface PatchPayload {
   tag?: string;
   displayName?: string;
   recognized?: boolean;
-  legalName?: string;
-  addressLine1?: string;
-  addressLine2?: string;
-  attention?: string;
+  legalName?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  attention?: string | null;
 }
 
 function parsePatchPayload(body: unknown): PatchPayload | null {
@@ -40,29 +40,40 @@ function parsePatchPayload(body: unknown): PatchPayload | null {
     }
     update.recognized = recognized;
   }
+  // The four billing fields clear to `null` (not `""`) when sent blank —
+  // the Clients page form always sends all four on every save, even one
+  // that only touched tag/displayName, so a trimmed-empty string here must
+  // mean "no value" to downstream consumers that check for null
+  // (`createInvoice`'s `??` defaulting, the billing-profile seed's
+  // `isNull(clients.legalName)` idempotency guard) rather than "" being
+  // treated as a real (blank) value.
   if (legalName !== undefined) {
     if (typeof legalName !== "string") {
       return null;
     }
-    update.legalName = legalName.trim();
+    const trimmed = legalName.trim();
+    update.legalName = trimmed.length === 0 ? null : trimmed;
   }
   if (addressLine1 !== undefined) {
     if (typeof addressLine1 !== "string") {
       return null;
     }
-    update.addressLine1 = addressLine1.trim();
+    const trimmed = addressLine1.trim();
+    update.addressLine1 = trimmed.length === 0 ? null : trimmed;
   }
   if (addressLine2 !== undefined) {
     if (typeof addressLine2 !== "string") {
       return null;
     }
-    update.addressLine2 = addressLine2.trim();
+    const trimmed = addressLine2.trim();
+    update.addressLine2 = trimmed.length === 0 ? null : trimmed;
   }
   if (attention !== undefined) {
     if (typeof attention !== "string") {
       return null;
     }
-    update.attention = attention.trim();
+    const trimmed = attention.trim();
+    update.attention = trimmed.length === 0 ? null : trimmed;
   }
 
   if (Object.keys(update).length === 0) {
@@ -113,9 +124,11 @@ export async function PATCH(
 
 /**
  * Permanently removes a client. Blocked by the database's own foreign-key
- * constraint (`tasks.client_id` has no `ON DELETE` action) whenever a task
- * still references it — surfaced as a 409 rather than a crash, since a
- * client with review history is exactly the case this should refuse.
+ * constraints (`tasks.client_id`, `content_ideas.client_id`, and
+ * `invoices.client_id` all have no `ON DELETE` action) whenever a task,
+ * content idea, or invoice still references it — surfaced as a 409 rather
+ * than a crash, since a client with review/invoice history is exactly the
+ * case this should refuse.
  */
 export async function DELETE(
   _request: Request,
@@ -133,10 +146,11 @@ export async function DELETE(
   } catch (error) {
     if (
       isForeignKeyViolation(error, "tasks_client_id_clients_id_fk") ||
-      isForeignKeyViolation(error, "content_ideas_client_id_clients_id_fk")
+      isForeignKeyViolation(error, "content_ideas_client_id_clients_id_fk") ||
+      isForeignKeyViolation(error, "invoices_client_id_clients_id_fk")
     ) {
       return NextResponse.json(
-        { error: "Can't delete — this client has existing review tasks or content ideas" },
+        { error: "Can't delete — this client has existing review tasks, content ideas, or invoices" },
         { status: 409 },
       );
     }
