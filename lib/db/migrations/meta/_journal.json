@@ -71,6 +71,13 @@
       "when": 1792424296923,
       "tag": "0009_add_client_billing_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792424983884,
+      "tag": "0010_add_invoices",
+      "breakpoints": true
     }
   ]
 }

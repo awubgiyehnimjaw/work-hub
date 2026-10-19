@@ -153,3 +153,25 @@ export const postingScheduleCompletions = pgTable("posting_schedule_completions"
   entryKey: text("entry_key").primaryKey(),
   completedAt: timestamp("completed_at").notNull().defaultNow(),
 });
+
+// Generated invoices. The client's billing-profile fields (legalName/
+// addressLine1/addressLine2/attention) are snapshotted onto the invoice
+// row at creation time rather than joined live from `clients` — an
+// invoice is a legal document and must keep showing exactly the address
+// it was issued to, even if the client's profile is edited or renamed
+// later. `clientId` is kept only for display (e.g. `clientDisplayName` in
+// the list API) and has no `ON DELETE` action, matching `tasks.clientId`.
+export const invoices = pgTable("invoices", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  invoiceNumber: text("invoice_number").notNull().unique(),
+  clientId: uuid("client_id").notNull().references(() => clients.id),
+  clientLegalName: text("client_legal_name").notNull(),
+  clientAddressLine1: text("client_address_line1").notNull(),
+  clientAddressLine2: text("client_address_line2"),
+  clientAttention: text("client_attention").notNull(),
+  invoiceDate: timestamp("invoice_date").notNull(),
+  dueDate: timestamp("due_date").notNull(),
+  description: text("description"),
+  totalAmountCents: integer("total_amount_cents").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
