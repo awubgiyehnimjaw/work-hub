@@ -122,6 +122,9 @@ export default function HomePage() {
           <a href="/history" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
             History →
           </a>
+          <a href="/invoices" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
+            Invoices →
+          </a>
         </div>
       </div>
 
