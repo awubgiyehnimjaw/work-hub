@@ -9,7 +9,8 @@
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:seed": "tsx lib/db/seed-cli.ts"
+    "db:seed": "tsx lib/db/seed-cli.ts",
+    "db:backfill-invoices": "tsx lib/db/backfill-invoices-cli.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.9",

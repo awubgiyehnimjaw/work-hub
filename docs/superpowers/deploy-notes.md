@@ -164,6 +164,30 @@ leaving the app broken until someone remembers to run this command. Don't
 rely on that instead of running this step, though — until the first poll
 runs (or this command does), `/api/suggestions` is still broken.
 
+### 4.2 Backfill client billing profiles and the October 2026 invoices
+
+**Do this once**, after this Invoices feature's migrations (the ones
+adding `legalName`/`addressLine1`/`addressLine2`/`attention` to `clients`
+and creating the `invoices` table) have been applied to production per
+§4 above:
+
+```bash
+DATABASE_URL="<your Neon connection string>" npx tsx lib/db/backfill-invoices-cli.ts
+```
+
+This runs `lib/db/backfill-invoices-cli.ts`, which fills in the known
+billing profiles (legal company name + address) for Lovelots, That Place,
+and HappyFish, then records the two real invoices — `ARC2610-001` (That
+Place) and `ARC2610-002` (Lovelots) — that were already issued to those
+clients in October 2026, before this app's Invoices feature existed.
+Skipping this means the app's own invoice-numbering sequence would start
+from `ARC2610-001` again the first time an invoice is created against
+either client, colliding with a number already in use.
+
+Like `db:seed`, both steps this script runs
+(`seedClientBillingProfiles`/`backfillOctoberInvoices`) are idempotent, so
+re-running this command later is safe and a no-op.
+
 ## 5. Connect Frame.io and Google Calendar (one-time, logged in)
 
 Both of Work Hub's external integrations are connected by visiting a URL

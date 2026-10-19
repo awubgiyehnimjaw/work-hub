@@ -1,7 +1,8 @@
+import { eq, inArray } from "drizzle-orm";
 import { expect, test } from "vitest";
 import { db } from "@/lib/db/client";
 import { clients, suggestions } from "@/lib/db/schema";
-import { seedClients, seedSuggestions } from "@/lib/db/seed";
+import { seedClientBillingProfiles, seedClients, seedSuggestions } from "@/lib/db/seed";
 
 test("seedClients creates the known client tags exactly once each", async () => {
   await seedClients();
@@ -34,4 +35,26 @@ test("seedSuggestions creates the seeded suggestions exactly once each, grouped 
 
   const texts = new Set(rows.map((r) => r.text));
   expect(texts.size).toBe(11);
+});
+
+test("seedClientBillingProfiles fills in legalName/address for Lovelots, That Place, and HappyFish", async () => {
+  await seedClients(); // these three tags must exist first, same as production
+  await seedClientBillingProfiles();
+
+  const rows = await db.select().from(clients).where(inArray(clients.tag, ["Lovelots", "That Place", "HappyFish"]));
+  const lovelots = rows.find((r) => r.tag === "Lovelots")!;
+  expect(lovelots.legalName).toBe("LOVELOTS DIAMOND PTE LTD");
+  expect(lovelots.addressLine1).toBe("181 Orchard Road");
+  expect(lovelots.addressLine2).toBe("#04-02, Singapore 238896");
+  expect(lovelots.attention).toBe("Account Department");
+});
+
+test("seedClientBillingProfiles never overwrites a profile Callum already edited", async () => {
+  await seedClients();
+  await db.update(clients).set({ legalName: "MANUALLY EDITED" }).where(eq(clients.tag, "Lovelots"));
+
+  await seedClientBillingProfiles();
+
+  const [lovelots] = await db.select().from(clients).where(eq(clients.tag, "Lovelots"));
+  expect(lovelots.legalName).toBe("MANUALLY EDITED");
 });

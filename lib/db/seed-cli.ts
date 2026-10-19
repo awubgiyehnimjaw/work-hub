@@ -14,12 +14,13 @@
  * Uses relative imports (not the `@/` alias) so this can run directly
  * under `tsx` with no tsconfig-paths resolution step.
  */
-import { seedClients, seedSuggestions } from "./seed";
+import { seedClientBillingProfiles, seedClients, seedSuggestions } from "./seed";
 
 async function main(): Promise<void> {
   await seedClients();
+  await seedClientBillingProfiles();
   await seedSuggestions();
-  console.log("Database seeded: known clients + growth suggestions (idempotent).");
+  console.log("Database seeded: known clients + billing profiles + growth suggestions (idempotent).");
 }
 
 main()
