@@ -60,9 +60,19 @@ export default function InvoiceViewerPage() {
           ← Invoices
         </a>
         {invoice ? (
+          // `download` is a progressive-enhancement hint only — iOS Safari
+          // (including installed PWAs, this app's primary target) often
+          // ignores it and just navigates the link's own tab instead of
+          // triggering a save dialog. In a standalone PWA window that has
+          // no address bar/back button, that left no way back from this
+          // page. `target="_blank"` guarantees the fallback still lands in
+          // a separate tab/window rather than replacing this one, same
+          // pattern as the post-generate auto-open in app/invoices/page.tsx.
           <a
             href={`/api/invoices/${id}/pdf`}
             download={`${invoice.invoiceNumber}.pdf`}
+            target="_blank"
+            rel="noopener"
             className="interactive"
             style={{
               fontSize: 14,
