@@ -24,6 +24,49 @@ export default function InvoiceViewerPage() {
 
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [state, setState] = useState<LoadState>("loading");
+  const [downloadError, setDownloadError] = useState(false);
+
+  /**
+   * iOS Safari (including installed PWAs, this app's primary target)
+   * doesn't honor `Content-Disposition: attachment` the way desktop
+   * browsers do — it just previews the PDF in its own built-in viewer
+   * regardless, so a plain `<a download>` link never actually offers a
+   * save action there (confirmed live: the previous `target="_blank"`
+   * fix stopped the user from getting stuck on the PDF with no way back,
+   * but the PDF it opened still had no way to save it). The Web Share
+   * API sidesteps this entirely — it invokes the OS's own native share
+   * sheet (iOS's real "Save to Files"/AirDrop/Messages sheet) directly
+   * from a button tap, with no navigation and no dependence on how a
+   * given browser chooses to render a `Content-Disposition` response.
+   * Falls back to the plain anchor-link behavior (confirmed working on
+   * desktop) when the Share API or file sharing isn't available.
+   */
+  async function handleShare() {
+    if (!invoice) return;
+    setDownloadError(false);
+    try {
+      const res = await fetch(`/api/invoices/${id}/pdf`);
+      if (!res.ok) throw new Error("Failed to fetch PDF");
+      const blob = await res.blob();
+      const file = new File([blob], `${invoice.invoiceNumber}.pdf`, { type: "application/pdf" });
+
+      if (typeof navigator.share === "function" && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file] });
+        return;
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${invoice.invoiceNumber}.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      // AbortError is the user dismissing the native share sheet — not a failure.
+      if (error instanceof Error && error.name === "AbortError") return;
+      setDownloadError(true);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -60,19 +103,9 @@ export default function InvoiceViewerPage() {
           ← Invoices
         </a>
         {invoice ? (
-          // `download` is a progressive-enhancement hint only — iOS Safari
-          // (including installed PWAs, this app's primary target) often
-          // ignores it and just navigates the link's own tab instead of
-          // triggering a save dialog. In a standalone PWA window that has
-          // no address bar/back button, that left no way back from this
-          // page. `target="_blank"` guarantees the fallback still lands in
-          // a separate tab/window rather than replacing this one, same
-          // pattern as the post-generate auto-open in app/invoices/page.tsx.
-          <a
-            href={`/api/invoices/${id}/pdf`}
-            download={`${invoice.invoiceNumber}.pdf`}
-            target="_blank"
-            rel="noopener"
+          <button
+            type="button"
+            onClick={handleShare}
             className="interactive"
             style={{
               fontSize: 14,
@@ -82,13 +115,18 @@ export default function InvoiceViewerPage() {
               border: "none",
               borderRadius: 8,
               padding: "8px 14px",
-              textDecoration: "none",
             }}
           >
             Download
-          </a>
+          </button>
         ) : null}
       </div>
+
+      {downloadError ? (
+        <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13, margin: "0 0 12px" }}>
+          Couldn&apos;t save that — try again.
+        </p>
+      ) : null}
 
       {state === "loading" ? <p style={{ color: "var(--color-text-muted)" }}>Loading…</p> : null}
       {state === "error" ? (
