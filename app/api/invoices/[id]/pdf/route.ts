@@ -4,9 +4,16 @@ import { db } from "@/lib/db/client";
 import { invoices } from "@/lib/db/schema";
 import { renderInvoicePdfBuffer } from "@/lib/invoices/pdf";
 
-/** Streams a single invoice back as a downloadable PDF, named after its invoice number. */
+/**
+ * Streams a single invoice back as a PDF, named after its invoice number.
+ * Defaults to `Content-Disposition: attachment` (forces a save) — the
+ * behavior every existing caller relies on. `?mode=inline` switches to
+ * `Content-Disposition: inline`, which the Invoices detail page's
+ * embedded `<iframe>` needs to actually render the PDF in place instead
+ * of triggering a download inside the frame.
+ */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -17,12 +24,13 @@ export async function GET(
   }
 
   const pdf = await renderInvoicePdfBuffer(invoice);
+  const inline = new URL(request.url).searchParams.get("mode") === "inline";
 
   return new Response(new Uint8Array(pdf), {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${invoice.invoiceNumber}.pdf"`,
+      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${invoice.invoiceNumber}.pdf"`,
     },
   });
 }

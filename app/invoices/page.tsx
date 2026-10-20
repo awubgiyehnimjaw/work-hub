@@ -97,7 +97,7 @@ export default function InvoicesPage() {
         throw new Error("Failed to create invoice");
       }
       const created: Invoice = await res.json();
-      window.open(`/api/invoices/${created.id}/pdf`, "_blank");
+      window.open(`/invoices/${created.id}`, "_blank");
       setNewClientId("");
       setNewDescription("");
       setNewAmount("");
@@ -225,7 +225,7 @@ export default function InvoicesPage() {
                   </div>
                 </div>
                 <a
-                  href={`/api/invoices/${invoice.id}/pdf`}
+                  href={`/invoices/${invoice.id}`}
                   className="interactive"
                   style={{
                     fontSize: 13,
@@ -238,7 +238,7 @@ export default function InvoicesPage() {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  Download
+                  View
                 </a>
               </div>
             </li>
