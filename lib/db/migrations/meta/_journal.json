@@ -78,6 +78,13 @@
       "when": 1792424983884,
       "tag": "0010_add_invoices",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792931968974,
+      "tag": "0011_add_conversation_messages",
+      "breakpoints": true
     }
   ]
 }

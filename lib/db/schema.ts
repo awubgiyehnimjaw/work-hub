@@ -19,6 +19,10 @@ export const oauthProviderEnum = pgEnum("oauth_provider", [
   "frameio",
   "google",
 ]);
+export const conversationRoleEnum = pgEnum("conversation_role", [
+  "user",
+  "assistant",
+]);
 
 export const clients = pgTable("clients", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -152,6 +156,22 @@ export const telegramUpdates = pgTable("telegram_updates", {
 export const postingScheduleCompletions = pgTable("posting_schedule_completions", {
   entryKey: text("entry_key").primaryKey(),
   completedAt: timestamp("completed_at").notNull().defaultNow(),
+});
+
+// Short-term memory for the Telegram chat handler: every turn of both the
+// chat handler itself and the existing capture flow (to-do/content-idea
+// creation), so a follow-up like "actually make that due Friday" has
+// context even though it routes to chat, not capture. `chatId` is `text`
+// (stored as `String(chatId)`) rather than `integer`, matching how
+// `isAllowedChatId` already compares chat ids as strings — avoids any risk
+// of a Telegram chat id exceeding Postgres `integer` range. No pruning —
+// storage is trivial at this volume.
+export const conversationMessages = pgTable("conversation_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  chatId: text("chat_id").notNull(),
+  role: conversationRoleEnum("role").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // Generated invoices. The client's billing-profile fields (legalName/
