@@ -47,6 +47,31 @@ export interface ParsedCapture {
   dueAt: string | null;
 }
 
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface ToolCallRequest {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export type ToolDispatcher = (call: ToolCallRequest) => Promise<string>;
+
+const AGENT_MODEL = PARSE_MODEL;
+const MAX_AGENT_ROUNDS = 5;
+const AGENT_FALLBACK_REPLY = "Sorry, I couldn't come up with a reply to that.";
+
+interface GroqChatMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
+  tool_call_id?: string;
+}
+
 function requireEnv(name: "GROQ_API_KEY"): string {
   const value = process.env[name];
   if (!value) {
@@ -175,4 +200,90 @@ export async function parseCaptureMessage(
     console.error("parseCaptureMessage: unexpected failure", error);
     return parseFallback(text);
   }
+}
+
+/**
+ * Confirmed live against the real Groq API (`openai/gpt-oss-120b`,
+ * 2026-10-25): `choices[0].message.tool_calls` is an array of
+ * `{ id, type: "function", function: { name, arguments } }`, with
+ * `arguments` as a JSON-encoded string — the standard OpenAI-compatible
+ * shape assumed below. A plain-text reply omits `tool_calls` entirely and
+ * sets `content` to the reply string. The model also returns its own
+ * `reasoning` field alongside either shape — not resent on the next
+ * round; only `role`/`content`/`tool_calls` are preserved in history.
+ */
+export async function runToolCallingAgent(
+  systemPrompt: string,
+  history: { role: "user" | "assistant"; content: string }[],
+  userText: string,
+  tools: ToolDefinition[],
+  dispatch: ToolDispatcher,
+): Promise<string> {
+  const apiKey = requireEnv("GROQ_API_KEY");
+
+  const messages: GroqChatMessage[] = [
+    { role: "system", content: systemPrompt },
+    ...history.map((m) => ({ role: m.role, content: m.content }) as GroqChatMessage),
+    { role: "user", content: userText },
+  ];
+
+  const wireTools = tools.map((tool) => ({
+    type: "function" as const,
+    function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+  }));
+
+  for (let round = 0; round < MAX_AGENT_ROUNDS; round++) {
+    const response = await fetch(`${GROQ_API_BASE}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: AGENT_MODEL,
+        messages,
+        ...(wireTools.length > 0 ? { tools: wireTools } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.error(`runToolCallingAgent: Groq request failed: ${response.status} ${body}`);
+      return AGENT_FALLBACK_REPLY;
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string | null; tool_calls?: GroqChatMessage["tool_calls"] } }>;
+    };
+    const message = data.choices?.[0]?.message;
+
+    if (!message) {
+      console.error("runToolCallingAgent: Groq response had no message");
+      return AGENT_FALLBACK_REPLY;
+    }
+
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      messages.push({ role: "assistant", content: message.content ?? null, tool_calls: message.tool_calls });
+
+      for (const call of message.tool_calls) {
+        let resultContent: string;
+        try {
+          resultContent = await dispatch({ id: call.id, name: call.function.name, arguments: call.function.arguments });
+        } catch (error) {
+          resultContent = `Error executing tool "${call.function.name}": ${error instanceof Error ? error.message : String(error)}`;
+        }
+        messages.push({ role: "tool", content: resultContent, tool_call_id: call.id });
+      }
+
+      continue;
+    }
+
+    if (message.content) {
+      return message.content;
+    }
+
+    return AGENT_FALLBACK_REPLY;
+  }
+
+  return AGENT_FALLBACK_REPLY;
 }
