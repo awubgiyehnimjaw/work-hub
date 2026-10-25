@@ -14,6 +14,10 @@ vi.mock("@/lib/groq/client", () => ({
   parseCaptureMessage: vi.fn(),
 }));
 
+vi.mock("@/lib/telegram/chat-handler", () => ({
+  handleChatMessage: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Wraps the real createTodo so every existing test still hits the real DB
 // insert by default — only the two tests below override it to simulate a
 // write failure.
@@ -25,6 +29,8 @@ vi.mock("@/lib/tasks/create-todo", async () => {
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
 import { parseCaptureMessage, transcribeVoice } from "@/lib/groq/client";
 import { createTodo } from "@/lib/tasks/create-todo";
+import { handleChatMessage } from "@/lib/telegram/chat-handler";
+import { appendMessage } from "@/lib/telegram/conversation-memory";
 import { POST } from "@/app/api/telegram/webhook/route";
 
 const mockSendMessage = vi.mocked(sendMessage);
@@ -33,6 +39,7 @@ const mockDownloadFile = vi.mocked(downloadFile);
 const mockTranscribeVoice = vi.mocked(transcribeVoice);
 const mockParseCaptureMessage = vi.mocked(parseCaptureMessage);
 const mockCreateTodo = vi.mocked(createTodo);
+const mockHandleChatMessage = vi.mocked(handleChatMessage);
 
 process.env.TELEGRAM_WEBHOOK_SECRET = "test-webhook-secret";
 process.env.TELEGRAM_ALLOWED_CHAT_IDS = "999";
@@ -58,6 +65,7 @@ beforeEach(async () => {
   mockTranscribeVoice.mockClear();
   mockParseCaptureMessage.mockClear();
   mockCreateTodo.mockClear();
+  mockHandleChatMessage.mockClear().mockResolvedValue(undefined);
 });
 
 test("returns 401 when the secret header is wrong", async () => {
@@ -104,13 +112,28 @@ test("a content_idea with a client name that matches nothing replies with a coul
   expect(mockSendMessage).toHaveBeenCalled();
 });
 
-test("an unclear message writes nothing and asks Callum to resend", async () => {
+test("an unclear message routes to the chat handler instead of the fixed reply", async () => {
   mockParseCaptureMessage.mockResolvedValue({ type: "unclear", client: null, text: "hmm", dueAt: null });
-  const res = await POST(updateRequest({ update_id: 4, message: { chat: { id: ALLOWED_CHAT_ID }, text: "hmm" } }));
+  const res = await POST(updateRequest({ update_id: 10, message: { chat: { id: ALLOWED_CHAT_ID }, text: "hmm" } }));
   expect(res.status).toBe(200);
-  expect(await db.select().from(tasks)).toHaveLength(0);
-  expect(await db.select().from(contentIdeas)).toHaveLength(0);
-  expect(mockSendMessage).toHaveBeenCalled();
+  expect(mockHandleChatMessage).toHaveBeenCalledWith(ALLOWED_CHAT_ID, "hmm", expect.any(Date));
+  expect(mockSendMessage).not.toHaveBeenCalled();
+});
+
+test("a message arriving while the bot's last message was a recent clarifying question skips the classifier entirely", async () => {
+  await appendMessage(ALLOWED_CHAT_ID, "assistant", "Did you mean the dentist to-do or the vet one?", new Date());
+  const res = await POST(updateRequest({ update_id: 11, message: { chat: { id: ALLOWED_CHAT_ID }, text: "the dentist one" } }));
+  expect(res.status).toBe(200);
+  expect(mockParseCaptureMessage).not.toHaveBeenCalled();
+  expect(mockHandleChatMessage).toHaveBeenCalledWith(ALLOWED_CHAT_ID, "the dentist one", expect.any(Date));
+});
+
+test("a message arriving after the clarifying-question window has passed still goes through the classifier normally", async () => {
+  await appendMessage(ALLOWED_CHAT_ID, "assistant", "Which one did you mean?", new Date(Date.now() - 11 * 60 * 1000));
+  mockParseCaptureMessage.mockResolvedValue({ type: "todo", client: null, text: "new todo", dueAt: null });
+  const res = await POST(updateRequest({ update_id: 12, message: { chat: { id: ALLOWED_CHAT_ID }, text: "to do, new todo" } }));
+  expect(res.status).toBe(200);
+  expect(mockParseCaptureMessage).toHaveBeenCalled();
 });
 
 test("a message from a chat other than the allowed one is fully ignored — no DB write, no reply", async () => {

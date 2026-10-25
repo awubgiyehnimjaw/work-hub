@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { clients, contentIdeas, telegramUpdates } from "@/lib/db/schema";
 import { createTodo } from "@/lib/tasks/create-todo";
-import { appendMessage } from "@/lib/telegram/conversation-memory";
+import { handleChatMessage } from "@/lib/telegram/chat-handler";
+import { appendMessage, shouldSkipClassifier } from "@/lib/telegram/conversation-memory";
 import { checkTelegramWebhookSecret, isAllowedChatId } from "@/lib/telegram/webhook-auth";
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
 import { formatLocalDateTime, parseCaptureMessage, transcribeVoice } from "@/lib/groq/client";
@@ -88,6 +89,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ status: "error" }, { status: 200 });
   }
 
+  if (await shouldSkipClassifier(chatId, new Date())) {
+    // The bot's own last message was a clarifying question within the
+    // last ~10 minutes — a short reply like "the dentist one" answering
+    // it would otherwise risk being misclassified by parseCaptureMessage
+    // as a fresh to-do. Skip the classifier and recognized-clients lookup
+    // entirely, straight to the chat handler that's already mid-exchange.
+    await handleChatMessage(chatId, text, new Date());
+    return NextResponse.json({ status: "ok" }, { status: 200 });
+  }
+
   const recognizedClients = await db.select().from(clients).where(eq(clients.recognized, true));
 
   // Everything from here on (parsing, the todo/content-idea write, the
@@ -132,10 +143,7 @@ export async function POST(request: Request) {
         await appendMessage(chatId, "assistant", confirmation, new Date());
       }
     } else {
-      await replySafely(
-        chatId,
-        'I couldn\'t tell if that\'s a to-do or a content idea — try again starting with "to do" or "content idea for <client>".',
-      );
+      await handleChatMessage(chatId, text, new Date());
     }
   } catch (error) {
     console.error("telegram webhook: failed to save the parsed message", error);
