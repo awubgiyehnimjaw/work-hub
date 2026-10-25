@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
-import { clients, tasks } from "@/lib/db/schema";
+import { tasks } from "@/lib/db/schema";
+import { completeTask } from "@/lib/tasks/complete";
 
 type PatchBody =
   | { action: "complete" }
@@ -72,12 +73,19 @@ export async function PATCH(
   }
 
   const now = new Date();
+
+  if (parsed.action === "complete") {
+    const updated = await completeTask(id, now);
+    if (!updated) {
+      return NextResponse.json({ error: "Task not found" }, { status: 404 });
+    }
+    return NextResponse.json(updated, { status: 200 });
+  }
+
   const updateValues =
-    parsed.action === "complete"
-      ? { status: "completed" as const, completedAt: now }
-      : parsed.action === "reopen"
-        ? { status: "active" as const, completedAt: null }
-        : { snoozedUntil: parsed.until };
+    parsed.action === "reopen"
+      ? { status: "active" as const, completedAt: null }
+      : { snoozedUntil: parsed.until };
 
   const [updated] = await db
     .update(tasks)
@@ -87,13 +95,6 @@ export async function PATCH(
 
   if (!updated) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
-  }
-
-  if (parsed.action === "complete" && updated.type === "review" && updated.clientId !== null) {
-    await db
-      .update(clients)
-      .set({ lastActivityAt: now })
-      .where(eq(clients.id, updated.clientId));
   }
 
   return NextResponse.json(updated, { status: 200 });

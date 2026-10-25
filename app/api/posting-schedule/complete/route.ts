@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db/client";
-import { postingScheduleCompletions } from "@/lib/db/schema";
+import { completePostingScheduleEntry } from "@/lib/posting-schedule/complete";
 
 /**
  * Marks a posting-schedule sheet row as done — the "Done" button on the
@@ -18,7 +17,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "entryKey must be a non-empty string" }, { status: 400 });
   }
 
-  await db.insert(postingScheduleCompletions).values({ entryKey }).onConflictDoNothing();
+  await completePostingScheduleEntry(entryKey);
 
   return NextResponse.json({ status: "ok" }, { status: 200 });
 }
