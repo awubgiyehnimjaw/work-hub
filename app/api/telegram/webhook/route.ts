@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { clients, contentIdeas, telegramUpdates } from "@/lib/db/schema";
 import { createTodo } from "@/lib/tasks/create-todo";
+import { appendMessage } from "@/lib/telegram/conversation-memory";
 import { checkTelegramWebhookSecret, isAllowedChatId } from "@/lib/telegram/webhook-auth";
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
 import { formatLocalDateTime, parseCaptureMessage, transcribeVoice } from "@/lib/groq/client";
@@ -110,7 +111,10 @@ export async function POST(request: Request) {
       }
       await createTodo({ title: parsed.text, dueAt });
       const dueSuffix = dueAt ? ` (due ${formatLocalDateTime(dueAt)})` : "";
-      await replySafely(chatId, `✅ To-do added: ${parsed.text}${dueSuffix}`);
+      const confirmation = `✅ To-do added: ${parsed.text}${dueSuffix}`;
+      await replySafely(chatId, confirmation);
+      await appendMessage(chatId, "user", text, new Date());
+      await appendMessage(chatId, "assistant", confirmation, new Date());
     } else if (parsed.type === "content_idea") {
       const matchedClient = parsed.client
         ? recognizedClients.find((c) => c.displayName.toLowerCase() === parsed.client!.toLowerCase())
@@ -122,7 +126,10 @@ export async function POST(request: Request) {
         );
       } else {
         await db.insert(contentIdeas).values({ clientId: matchedClient.id, text: parsed.text });
-        await replySafely(chatId, `✅ Content idea added for ${matchedClient.displayName}: ${parsed.text}`);
+        const confirmation = `✅ Content idea added for ${matchedClient.displayName}: ${parsed.text}`;
+        await replySafely(chatId, confirmation);
+        await appendMessage(chatId, "user", text, new Date());
+        await appendMessage(chatId, "assistant", confirmation, new Date());
       }
     } else {
       await replySafely(

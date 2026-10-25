@@ -1,7 +1,7 @@
 import { beforeEach, expect, test, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { clients, contentIdeas, tasks, telegramUpdates } from "@/lib/db/schema";
+import { clients, contentIdeas, conversationMessages, tasks, telegramUpdates } from "@/lib/db/schema";
 
 vi.mock("@/lib/telegram/client", () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -51,6 +51,7 @@ beforeEach(async () => {
   await db.delete(contentIdeas);
   await db.delete(telegramUpdates);
   await db.delete(clients);
+  await db.delete(conversationMessages);
   mockSendMessage.mockClear().mockResolvedValue(undefined);
   mockGetFilePath.mockClear();
   mockDownloadFile.mockClear();
@@ -72,6 +73,16 @@ test("a text message classified as todo creates a task and replies with a confir
   expect(rows).toHaveLength(1);
   expect(rows[0].title).toBe("call the client");
   expect(mockSendMessage).toHaveBeenCalledWith(ALLOWED_CHAT_ID, expect.stringContaining("call the client"));
+});
+
+test("a successful to-do capture logs both the user message and the confirmation to conversation memory", async () => {
+  mockParseCaptureMessage.mockResolvedValue({ type: "todo", client: null, text: "call the client", dueAt: null });
+  await POST(updateRequest({ update_id: 900, message: { chat: { id: ALLOWED_CHAT_ID }, text: "to do, call the client" } }));
+  const rows = await db.select().from(conversationMessages).orderBy(asc(conversationMessages.createdAt));
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toMatchObject({ role: "user", content: "to do, call the client" });
+  expect(rows[1]).toMatchObject({ role: "assistant" });
+  expect(rows[1].content).toContain("call the client");
 });
 
 test("a text message classified as content_idea with a matching client creates an idea and replies", async () => {
