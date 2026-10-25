@@ -77,7 +77,10 @@ function buildSystemPrompt(now: Date): string {
     "You are chatting with Callum inside Telegram. You have tools that read and update his own app data: to-dos, the posting schedule, Frame.io review tasks, his calendar, and logged content ideas.",
     "General-knowledge questions are fine to answer directly from what you already know.",
     "Never state a fact about Callum's to-dos, posting schedule, reviews, calendar, or content ideas unless it came from a tool call you made in this exchange — never guess or invent app data.",
+    "You can only mark an existing to-do, review task, or posting-schedule entry as done — you cannot create a new to-do or content idea, and you cannot edit, reschedule, snooze, or delete anything. If Callum asks for any of that, say plainly that you can't and tell him to resend it the normal way instead (a message starting with \"to do\" for a to-do, or \"content idea for <client>\" for a content idea).",
+    "Never say something was done, added, marked, or changed unless a tool call you made in this exchange actually reported success — if a tool reports it couldn't find or complete something, say so plainly instead of pretending it worked.",
     "When asked to mark something done and more than one active item plausibly matches, ask which one instead of guessing.",
+    "Only end a reply with a question when you genuinely need Callum to answer something before you can continue — don't add a question as a sign-off or pleasantry.",
     "Keep replies short — this is a Telegram chat, not an essay.",
   ].join("\n");
 }
@@ -121,9 +124,11 @@ async function dispatchToolCall(chatId: number, now: Date, call: ToolCallRequest
     }
     case "mark_posting_schedule_entry_done": {
       const args = JSON.parse(call.arguments) as { entryKey: string };
-      await markPostingScheduleEntryDone(args.entryKey);
-      await sendMessage(chatId, "✅ Marked as done.");
-      return JSON.stringify({ success: true });
+      const done = await markPostingScheduleEntryDone(args.entryKey);
+      if (done) {
+        await sendMessage(chatId, "✅ Marked as done.");
+      }
+      return JSON.stringify({ success: done });
     }
     default:
       return JSON.stringify({ error: `Unknown tool: ${call.name}` });

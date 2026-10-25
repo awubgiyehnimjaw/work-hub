@@ -12,15 +12,23 @@ vi.mock("@/lib/telegram/client", () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/lib/posting-schedule/sheet", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/posting-schedule/sheet")>("@/lib/posting-schedule/sheet");
+  return { ...actual, fetchPostingScheduleCsv: vi.fn() };
+});
+
 import { sendMessage } from "@/lib/telegram/client";
 import { appendMessage, getRecentMessages } from "@/lib/telegram/conversation-memory";
 import { handleChatMessage } from "@/lib/telegram/chat-handler";
+import { fetchPostingScheduleCsv } from "@/lib/posting-schedule/sheet";
 
 const mockSendMessage = vi.mocked(sendMessage);
+const mockFetchPostingScheduleCsv = vi.mocked(fetchPostingScheduleCsv);
 const CHAT_ID = 999;
 
 beforeEach(async () => {
   mockSendMessage.mockClear().mockResolvedValue(undefined);
+  mockFetchPostingScheduleCsv.mockReset();
   vi.unstubAllGlobals();
   await db.delete(tasks);
   await db.delete(conversationMessages);
@@ -78,7 +86,7 @@ test("a write tool call for an id that no longer exists sends no false confirmat
 test("conversation history is passed to Groq as prior context", async () => {
   await appendMessage(CHAT_ID, "user", "add buy milk to todo", new Date("2026-01-01T00:00:00Z"));
   await appendMessage(CHAT_ID, "assistant", "✅ To-do added: buy milk", new Date("2026-01-01T00:00:01Z"));
-  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "Sure, due Friday." } }] }), { status: 200 }));
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "I can't change a due date — resend it as a new to-do if you want a different one." } }] }), { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
   await handleChatMessage(CHAT_ID, "actually make that due Friday", new Date("2026-01-01T00:01:00Z"));
   const firstRequestBody = JSON.stringify(JSON.parse(fetchMock.mock.calls[0][1].body));
@@ -89,4 +97,28 @@ test("never throws — an unexpected Groq failure still sends a safe reply", asy
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
   await expect(handleChatMessage(CHAT_ID, "hello", new Date())).resolves.toBeUndefined();
   expect(mockSendMessage).toHaveBeenCalled();
+});
+
+test("the system prompt forbids claiming an action succeeded without a successful tool call, states what it cannot do, and discourages sign-off questions", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "ok" } }] }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await handleChatMessage(CHAT_ID, "hello", new Date());
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+  const systemMessage = (body.messages[0].content as string).toLowerCase();
+  expect(systemMessage).toContain("cannot create a new to-do");
+  expect(systemMessage).toContain("never say something was done");
+  expect(systemMessage).toContain("sign-off");
+});
+
+test("a mark_posting_schedule_entry_done call for a key matching no real sheet entry sends no false confirmation", async () => {
+  mockFetchPostingScheduleCsv.mockResolvedValue("Client,Video,Edit By,Post Date,Notes,Posted\n");
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "mark_posting_schedule_entry_done", arguments: JSON.stringify({ entryKey: "Nonexistent|Video|2026-01-01" }) } }] } }],
+    }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "I couldn't find that entry." } }] }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await handleChatMessage(CHAT_ID, "mark that posting as done", new Date());
+  expect(mockSendMessage).toHaveBeenCalledTimes(1);
+  expect(mockSendMessage).toHaveBeenCalledWith(CHAT_ID, "I couldn't find that entry.");
 });

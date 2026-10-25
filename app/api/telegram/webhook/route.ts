@@ -36,6 +36,38 @@ async function replySafely(chatId: number, text: string): Promise<void> {
 }
 
 /**
+ * Conversation-memory logging is purely additive (Task 2) — it must never
+ * be able to turn an already-successful capture into a false "couldn't
+ * save, please resend" (final-review Important 1), so a failure here is
+ * logged and swallowed exactly like `replySafely`, not allowed to
+ * propagate into the capture flow's own try/catch.
+ */
+async function logToMemorySafely(chatId: number, role: "user" | "assistant", content: string): Promise<void> {
+  try {
+    await appendMessage(chatId, role, content, new Date());
+  } catch (error) {
+    console.error("telegram webhook: failed to log to conversation memory", error);
+  }
+}
+
+/**
+ * The clarifying-question routing check is a convenience, not a hard
+ * dependency — if conversation memory is unreachable, the safe default is
+ * to fall through to the normal classifier rather than letting an
+ * unhandled throw here crash the request (final-review Important 2): the
+ * `telegramUpdates` de-dup row is already committed by this point, so an
+ * uncaught error would silently lose the message on Telegram's retry.
+ */
+async function shouldSkipClassifierSafely(chatId: number): Promise<boolean> {
+  try {
+    return await shouldSkipClassifier(chatId, new Date());
+  } catch (error) {
+    console.error("telegram webhook: failed to check conversation memory for routing", error);
+    return false;
+  }
+}
+
+/**
  * Receives every Telegram update for the capture bot. Always responds 200
  * once past the secret check (Telegram retries on a non-200 response),
  * covering: de-dup of a retried `update_id`, the allowed-chats list,
@@ -89,7 +121,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ status: "error" }, { status: 200 });
   }
 
-  if (await shouldSkipClassifier(chatId, new Date())) {
+  if (await shouldSkipClassifierSafely(chatId)) {
     // The bot's own last message was a clarifying question within the
     // last ~10 minutes — a short reply like "the dentist one" answering
     // it would otherwise risk being misclassified by parseCaptureMessage
@@ -124,8 +156,8 @@ export async function POST(request: Request) {
       const dueSuffix = dueAt ? ` (due ${formatLocalDateTime(dueAt)})` : "";
       const confirmation = `✅ To-do added: ${parsed.text}${dueSuffix}`;
       await replySafely(chatId, confirmation);
-      await appendMessage(chatId, "user", text, new Date());
-      await appendMessage(chatId, "assistant", confirmation, new Date());
+      await logToMemorySafely(chatId, "user", text);
+      await logToMemorySafely(chatId, "assistant", confirmation);
     } else if (parsed.type === "content_idea") {
       const matchedClient = parsed.client
         ? recognizedClients.find((c) => c.displayName.toLowerCase() === parsed.client!.toLowerCase())
@@ -139,8 +171,8 @@ export async function POST(request: Request) {
         await db.insert(contentIdeas).values({ clientId: matchedClient.id, text: parsed.text });
         const confirmation = `✅ Content idea added for ${matchedClient.displayName}: ${parsed.text}`;
         await replySafely(chatId, confirmation);
-        await appendMessage(chatId, "user", text, new Date());
-        await appendMessage(chatId, "assistant", confirmation, new Date());
+        await logToMemorySafely(chatId, "user", text);
+        await logToMemorySafely(chatId, "assistant", confirmation);
       }
     } else {
       await handleChatMessage(chatId, text, new Date());

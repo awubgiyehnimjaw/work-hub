@@ -122,10 +122,32 @@ test("markReviewDone completes a review and returns true, and false for a todo's
   expect(unchangedTodo.status).toBe("active");
 });
 
-test("markPostingScheduleEntryDone records the entry as completed", async () => {
-  await markPostingScheduleEntryDone("Client|Video|2026-01-01");
+test("markPostingScheduleEntryDone returns true and records completion when the key matches a real sheet entry", async () => {
+  const csv = [
+    "Client,Video,Edit By,Post Date,Notes,Posted",
+    "Lovelots,Video A,,10 Jan 2026,,",
+  ].join("\n");
+  fetchPostingScheduleCsvMock.mockResolvedValue(csv);
+  const key = entryKey({ client: "Lovelots", video: "Video A", postDate: "2026-01-10" });
+
+  const result = await markPostingScheduleEntryDone(key);
+
+  expect(result).toBe(true);
   const rows = await db.select().from(postingScheduleCompletions);
-  expect(rows.map((r) => r.entryKey)).toContain("Client|Video|2026-01-01");
+  expect(rows.map((r) => r.entryKey)).toContain(key);
+});
+
+test("markPostingScheduleEntryDone returns false and writes nothing for a key matching no sheet entry", async () => {
+  const csv = [
+    "Client,Video,Edit By,Post Date,Notes,Posted",
+    "Lovelots,Video A,,10 Jan 2026,,",
+  ].join("\n");
+  fetchPostingScheduleCsvMock.mockResolvedValue(csv);
+
+  const result = await markPostingScheduleEntryDone("Nonexistent|Video|2026-01-01");
+
+  expect(result).toBe(false);
+  expect(await db.select().from(postingScheduleCompletions)).toHaveLength(0);
 });
 
 test("listContentIdeas filters by clientId when given", async () => {

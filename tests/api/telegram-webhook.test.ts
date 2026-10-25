@@ -26,11 +26,21 @@ vi.mock("@/lib/tasks/create-todo", async () => {
   return { ...actual, createTodo: vi.fn(actual.createTodo) };
 });
 
+// Wraps the real appendMessage/shouldSkipClassifier so every existing test
+// still hits the real implementation by default — only the tests below
+// override one to simulate a conversation-memory failure (Important 1/2
+// from the final review: a memory failure must never break or crash the
+// capture flow it's layered onto).
+vi.mock("@/lib/telegram/conversation-memory", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/telegram/conversation-memory")>("@/lib/telegram/conversation-memory");
+  return { ...actual, appendMessage: vi.fn(actual.appendMessage), shouldSkipClassifier: vi.fn(actual.shouldSkipClassifier) };
+});
+
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
 import { parseCaptureMessage, transcribeVoice } from "@/lib/groq/client";
 import { createTodo } from "@/lib/tasks/create-todo";
 import { handleChatMessage } from "@/lib/telegram/chat-handler";
-import { appendMessage } from "@/lib/telegram/conversation-memory";
+import { appendMessage, shouldSkipClassifier } from "@/lib/telegram/conversation-memory";
 import { POST } from "@/app/api/telegram/webhook/route";
 
 const mockSendMessage = vi.mocked(sendMessage);
@@ -40,6 +50,8 @@ const mockTranscribeVoice = vi.mocked(transcribeVoice);
 const mockParseCaptureMessage = vi.mocked(parseCaptureMessage);
 const mockCreateTodo = vi.mocked(createTodo);
 const mockHandleChatMessage = vi.mocked(handleChatMessage);
+const mockAppendMessage = vi.mocked(appendMessage);
+const mockShouldSkipClassifier = vi.mocked(shouldSkipClassifier);
 
 process.env.TELEGRAM_WEBHOOK_SECRET = "test-webhook-secret";
 process.env.TELEGRAM_ALLOWED_CHAT_IDS = "999";
@@ -66,6 +78,8 @@ beforeEach(async () => {
   mockParseCaptureMessage.mockClear();
   mockCreateTodo.mockClear();
   mockHandleChatMessage.mockClear().mockResolvedValue(undefined);
+  mockAppendMessage.mockClear();
+  mockShouldSkipClassifier.mockClear();
 });
 
 test("returns 401 when the secret header is wrong", async () => {
@@ -209,4 +223,25 @@ test("a failure saving the parsed message replies with an error instead of crash
   const rows = await db.select().from(tasks).where(eq(tasks.type, "todo"));
   expect(rows).toHaveLength(0);
   expect(mockSendMessage).toHaveBeenCalledWith(ALLOWED_CHAT_ID, expect.stringContaining("resend"));
+});
+
+test("a to-do capture still succeeds, and still confirms, even if logging it to conversation memory fails", async () => {
+  mockParseCaptureMessage.mockResolvedValue({ type: "todo", client: null, text: "call the client", dueAt: null });
+  mockAppendMessage.mockRejectedValueOnce(new Error("memory db down"));
+  const res = await POST(updateRequest({ update_id: 950, message: { chat: { id: ALLOWED_CHAT_ID }, text: "to do, call the client" } }));
+  expect(res.status).toBe(200);
+  const rows = await db.select().from(tasks).where(eq(tasks.type, "todo"));
+  expect(rows).toHaveLength(1);
+  expect(mockSendMessage).toHaveBeenCalledWith(ALLOWED_CHAT_ID, expect.stringContaining("call the client"));
+  expect(mockSendMessage).not.toHaveBeenCalledWith(ALLOWED_CHAT_ID, expect.stringContaining("resend"));
+});
+
+test("the webhook still classifies normally if the clarifying-question routing check itself fails", async () => {
+  mockShouldSkipClassifier.mockRejectedValueOnce(new Error("memory db down"));
+  mockParseCaptureMessage.mockResolvedValue({ type: "todo", client: null, text: "new todo", dueAt: null });
+  const res = await POST(updateRequest({ update_id: 951, message: { chat: { id: ALLOWED_CHAT_ID }, text: "to do, new todo" } }));
+  expect(res.status).toBe(200);
+  expect(mockParseCaptureMessage).toHaveBeenCalled();
+  const rows = await db.select().from(tasks).where(eq(tasks.type, "todo"));
+  expect(rows).toHaveLength(1);
 });

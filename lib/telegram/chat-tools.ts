@@ -157,7 +157,21 @@ export async function markReviewDone(id: string, now: Date): Promise<boolean> {
   return updated !== null;
 }
 
-/** Marks a posting-schedule sheet row done via `completePostingScheduleEntry` — no existence check possible, the sheet is the source of truth. */
-export async function markPostingScheduleEntryDone(entryKey: string): Promise<void> {
-  await completePostingScheduleEntry(entryKey);
+/**
+ * Marks a posting-schedule sheet row done via `completePostingScheduleEntry`
+ * — but only after confirming `targetEntryKey` actually matches a row in
+ * the live sheet. The sheet has no id column, so a slightly-wrong key
+ * from the model would otherwise insert a junk completion row while
+ * sending a "done" confirmation and leaving the real entry outstanding.
+ * Returns false, with no DB write, for a key matching nothing in the sheet.
+ */
+export async function markPostingScheduleEntryDone(targetEntryKey: string): Promise<boolean> {
+  const csv = await fetchPostingScheduleCsv();
+  const entries = parsePostingScheduleCsv(csv);
+  const matches = entries.some((entry) => entryKey(entry) === targetEntryKey);
+  if (!matches) {
+    return false;
+  }
+  await completePostingScheduleEntry(targetEntryKey);
+  return true;
 }
