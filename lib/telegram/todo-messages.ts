@@ -20,3 +20,13 @@ export async function sendNagMessage(chatId: number, task: TodoMessageTask): Pro
   ]];
   await sendMessage(chatId, `⏰ Overdue: ${task.title}${dueSuffix(task.dueAt)}`, keyboard);
 }
+
+/** Sent once per to-do by `maybeSendEveningSweep`'s "Still open:" list. */
+export async function sendSweepItemMessage(chatId: number, task: TodoMessageTask): Promise<void> {
+  const keyboard: InlineKeyboard = [[
+    { text: "✅ Done", callback_data: `td|done|${task.id}` },
+    { text: "➡️ Tomorrow", callback_data: `td|tomorrow|${task.id}` },
+    { text: "🗑 Drop", callback_data: `td|drop|${task.id}` },
+  ]];
+  await sendMessage(chatId, `${task.title}${dueSuffix(task.dueAt)}`, keyboard);
+}

@@ -5,7 +5,7 @@ import { calendarEventsCache, postingScheduleCompletions, pushSubscriptions, syn
 import { sendPush } from "@/lib/push/send";
 import { formatLocalDateTime } from "@/lib/groq/client";
 import { getOwnerChatId, sendMessage } from "@/lib/telegram/client";
-import { sendNagMessage } from "@/lib/telegram/todo-messages";
+import { sendNagMessage, sendSweepItemMessage } from "@/lib/telegram/todo-messages";
 import { isQuietHoursSgt, startOfTomorrowSgt } from "@/lib/reminders/sgt-time";
 import {
   fetchPostingScheduleCsv,
@@ -16,6 +16,10 @@ import {
 } from "@/lib/posting-schedule/sheet";
 
 const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+
+// 9pm SGT = 13:00 UTC — the evening sweep's own daily window, distinct
+// from POSTING_SCHEDULE_CHECK_HOUR_UTC's 9am SGT slot.
+const EVENING_SWEEP_WINDOW_UTC = 13;
 
 /** `tasks` rows that aren't currently snoozed — same filter `lib/telegram/chat-tools.ts` uses. */
 function notSnoozed(now: Date) {
@@ -420,6 +424,57 @@ export async function maybeSendMorningDigest(now: Date): Promise<{ sent: boolean
     ...undated.map((task) => `No date: ${task.title}`),
   ];
   await sendMessage(getOwnerChatId(), lines.join("\n"));
+
+  return { sent: true };
+}
+
+/**
+ * Sends a "Still open:" Telegram sweep once a day, in the 9pm SGT window —
+ * one message per unfinished to-do due today or overdue (no undated
+ * bucket, unlike the morning digest), each with its own Done/Tomorrow/Drop
+ * buttons via `sendSweepItemMessage`. Same once-per-day guard pattern as
+ * `maybeSendMorningDigest`, via its own `eveningSweepSentAt` column.
+ */
+export async function maybeSendEveningSweep(now: Date): Promise<{ sent: boolean }> {
+  if (now.getUTCHours() !== EVENING_SWEEP_WINDOW_UTC) {
+    return { sent: false };
+  }
+
+  const state = await getSyncStateRow();
+  const alreadyCheckedToday =
+    state.eveningSweepSentAt !== null && now.getTime() - state.eveningSweepSentAt.getTime() < TWENTY_HOURS_MS;
+  if (alreadyCheckedToday) {
+    return { sent: false };
+  }
+
+  // "Overdue OR due today" collapses to one bound: every overdue dueAt
+  // (<= now) is necessarily also before tomorrowStart, since tomorrowStart
+  // is always in the future relative to now.
+  const tomorrowStart = startOfTomorrowSgt(now);
+  const candidates = await db
+    .select()
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.type, "todo"),
+        eq(tasks.status, "active"),
+        notSnoozed(now),
+        isNotNull(tasks.dueAt),
+        lt(tasks.dueAt, tomorrowStart),
+      ),
+    );
+
+  await db.update(syncState).set({ eveningSweepSentAt: now }).where(eq(syncState.id, state.id));
+
+  if (candidates.length === 0) {
+    return { sent: false };
+  }
+
+  const ownerChatId = getOwnerChatId();
+  await sendMessage(ownerChatId, "Still open:");
+  for (const task of candidates) {
+    await sendSweepItemMessage(ownerChatId, task);
+  }
 
   return { sent: true };
 }
