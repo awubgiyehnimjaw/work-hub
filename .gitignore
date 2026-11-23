@@ -18,6 +18,9 @@
 .env
 .env*.local
 
+# scratch (superpowers skill workspaces, brainstorm mockups)
+/.superpowers
+
 # misc
 .DS_Store
 *.pem
