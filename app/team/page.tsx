@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import PostingScheduleTab, { type PostingScheduleEntry } from "../components/team/PostingScheduleTab";
+import ContentIdeasTab, { type ContentIdea } from "../components/team/ContentIdeasTab";
 import ReviewsTab, { type ReviewTask } from "../components/team/ReviewsTab";
 import TasksTab, { type TaskTodo } from "../components/team/TasksTab";
 
@@ -27,6 +28,7 @@ export default function TeamDashboardPage() {
   const [activeTab, setActiveTab] = useState<Tab>("tasks");
   const [postingSchedule, setPostingSchedule] = useState<PostingScheduleEntry[]>([]);
   const [tasks, setTasks] = useState<ApiTask[]>([]);
+  const [contentIdeas, setContentIdeas] = useState<ContentIdea[]>([]);
 
   useEffect(() => {
     fetch("/api/posting-schedule/all")
@@ -38,6 +40,11 @@ export default function TeamDashboardPage() {
       .then((res) => (res.ok ? res.json() : []))
       .then(setTasks)
       .catch(() => setTasks([]));
+
+    fetch("/api/content-ideas/all")
+      .then((res) => (res.ok ? res.json() : []))
+      .then(setContentIdeas)
+      .catch(() => setContentIdeas([]));
   }, []);
 
   const todos: TaskTodo[] = tasks
@@ -109,7 +116,7 @@ export default function TeamDashboardPage() {
           ) : activeTab === "posting-schedule" ? (
             <PostingScheduleTab entries={postingSchedule} />
           ) : (
-            <p style={{ color: "#595959" }}>Coming soon</p>
+            <ContentIdeasTab ideas={contentIdeas} />
           )}
         </div>
       </div>
