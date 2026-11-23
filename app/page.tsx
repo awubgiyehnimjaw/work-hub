@@ -125,6 +125,9 @@ export default function HomePage() {
           <a href="/invoices" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
             Invoices →
           </a>
+          <a href="/team" className="interactive" style={{ fontSize: 14, color: "var(--color-text-muted)", textDecoration: "none" }}>
+            Team →
+          </a>
         </div>
       </div>
 
