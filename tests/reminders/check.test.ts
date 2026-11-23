@@ -402,12 +402,18 @@ test("checkUpcomingDueTodos fires the 3-day band, then later the 1-day band, for
   expect(row.dueOneDayNotifiedAt).not.toBeNull();
 });
 
+// Fixed at noon SGT (04:00 UTC) — never inside quiet hours (23:00-08:00
+// SGT) — so these tests don't flake depending on when they're actually
+// run (final-review Critical: the original `new Date()` usage here made
+// every "notified: 1" assertion fail for real between 11pm and 8am SGT).
+const NOON_SGT = new Date("2026-01-01T04:00:00Z");
+
 test("checkOverdueTodoNags nags an overdue to-do that's never been nagged", async () => {
   const [task] = await db
     .insert(tasks)
-    .values({ type: "todo", title: "x", status: "active", dueAt: new Date(Date.now() - 60_000) })
+    .values({ type: "todo", title: "x", status: "active", dueAt: new Date(NOON_SGT.getTime() - 60_000) })
     .returning();
-  const result = await checkOverdueTodoNags(new Date());
+  const result = await checkOverdueTodoNags(NOON_SGT);
   expect(result).toEqual({ notified: 1 });
   expect(sendNagMessageMock).toHaveBeenCalledWith(999, expect.objectContaining({ id: task.id }));
   const [row] = await db.select().from(tasks);
@@ -419,10 +425,10 @@ test("checkOverdueTodoNags skips a to-do nagged less than 3 hours ago", async ()
     type: "todo",
     title: "x",
     status: "active",
-    dueAt: new Date(Date.now() - 60_000),
-    telegramNagSentAt: new Date(Date.now() - 60 * 60 * 1000),
+    dueAt: new Date(NOON_SGT.getTime() - 60_000),
+    telegramNagSentAt: new Date(NOON_SGT.getTime() - 60 * 60 * 1000),
   });
-  expect(await checkOverdueTodoNags(new Date())).toEqual({ notified: 0 });
+  expect(await checkOverdueTodoNags(NOON_SGT)).toEqual({ notified: 0 });
 });
 
 test("checkOverdueTodoNags re-nags a to-do last nagged over 3 hours ago", async () => {
@@ -430,10 +436,10 @@ test("checkOverdueTodoNags re-nags a to-do last nagged over 3 hours ago", async 
     type: "todo",
     title: "x",
     status: "active",
-    dueAt: new Date(Date.now() - 60_000),
-    telegramNagSentAt: new Date(Date.now() - 4 * 60 * 60 * 1000),
+    dueAt: new Date(NOON_SGT.getTime() - 60_000),
+    telegramNagSentAt: new Date(NOON_SGT.getTime() - 4 * 60 * 60 * 1000),
   });
-  expect(await checkOverdueTodoNags(new Date())).toEqual({ notified: 1 });
+  expect(await checkOverdueTodoNags(NOON_SGT)).toEqual({ notified: 1 });
 });
 
 test("checkOverdueTodoNags does not nag during quiet hours and leaves telegramNagSentAt untouched", async () => {
@@ -449,15 +455,15 @@ test("checkOverdueTodoNags skips a snoozed to-do", async () => {
     type: "todo",
     title: "x",
     status: "active",
-    dueAt: new Date(Date.now() - 60_000),
-    snoozedUntil: new Date(Date.now() + 60 * 60 * 1000),
+    dueAt: new Date(NOON_SGT.getTime() - 60_000),
+    snoozedUntil: new Date(NOON_SGT.getTime() + 60 * 60 * 1000),
   });
-  expect(await checkOverdueTodoNags(new Date())).toEqual({ notified: 0 });
+  expect(await checkOverdueTodoNags(NOON_SGT)).toEqual({ notified: 0 });
 });
 
 test("checkOverdueTodoNags skips a dismissed to-do even if overdue", async () => {
-  await db.insert(tasks).values({ type: "todo", title: "x", status: "dismissed", dueAt: new Date(Date.now() - 60_000) });
-  expect(await checkOverdueTodoNags(new Date())).toEqual({ notified: 0 });
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "dismissed", dueAt: new Date(NOON_SGT.getTime() - 60_000) });
+  expect(await checkOverdueTodoNags(NOON_SGT)).toEqual({ notified: 0 });
 });
 
 test("maybeSendMorningDigest sends due-today, overdue, and undated active to-dos in the 9am SGT window", async () => {
@@ -504,6 +510,24 @@ test("maybeSendMorningDigest excludes a snoozed to-do", async () => {
 test("maybeSendMorningDigest does nothing outside the 9am SGT window", async () => {
   await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: null });
   expect(await maybeSendMorningDigest(new Date("2026-01-01T10:00:00Z"))).toEqual({ sent: false });
+});
+
+test("maybeSendMorningDigest does not mark the day checked if the send fails, so the next tick retries", async () => {
+  // Final-review Important: the guard was previously written before
+  // sendMessage, so a failed send (network error, Telegram 429/5xx, an
+  // over-length digest) permanently lost that day's digest instead of
+  // retrying on the next 15-minute cron tick.
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: null });
+  sendMessageMock.mockRejectedValueOnce(new Error("telegram down"));
+  await expect(maybeSendMorningDigest(new Date("2026-01-01T01:00:00Z"))).rejects.toThrow("telegram down");
+
+  const [state] = await db.select().from(syncState);
+  expect(state.morningDigestSentAt).toBeNull();
+
+  sendMessageMock.mockClear();
+  const retry = await maybeSendMorningDigest(new Date("2026-01-01T01:05:00Z"));
+  expect(retry).toEqual({ sent: true });
+  expect(sendMessageMock).toHaveBeenCalled();
 });
 
 test("maybeSendEveningSweep sends an intro and one message per unfinished to-do due today or overdue", async () => {
@@ -553,4 +577,18 @@ test("maybeSendEveningSweep excludes a snoozed to-do", async () => {
     snoozedUntil: new Date(Date.now() + 60_000),
   });
   expect(await maybeSendEveningSweep(new Date("2026-01-01T13:00:00Z"))).toEqual({ sent: false });
+});
+
+test("maybeSendEveningSweep does not mark the day checked if a send fails, so the next tick retries", async () => {
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: new Date("2025-12-31T00:00:00Z") });
+  sendMessageMock.mockRejectedValueOnce(new Error("telegram down"));
+  await expect(maybeSendEveningSweep(new Date("2026-01-01T13:00:00Z"))).rejects.toThrow("telegram down");
+
+  const [state] = await db.select().from(syncState);
+  expect(state.eveningSweepSentAt).toBeNull();
+
+  sendMessageMock.mockClear();
+  const retry = await maybeSendEveningSweep(new Date("2026-01-01T13:05:00Z"));
+  expect(retry).toEqual({ sent: true });
+  expect(sendSweepItemMessageMock).toHaveBeenCalled();
 });

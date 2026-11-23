@@ -47,13 +47,33 @@ test("drop action dismisses the task", async () => {
   expect(row.status).toBe("dismissed");
 });
 
-test("a stale action on an already-completed task edits the message without crashing", async () => {
+test("a stale done action on an already-completed task reports 'already handled', not success", async () => {
+  const completedAt = new Date("2026-01-01T00:00:00Z");
+  const [task] = await db
+    .insert(tasks)
+    .values({ type: "todo", title: "x", status: "completed", completedAt })
+    .returning();
+  await handleCallbackQuery(123, 456, "cb-1", `td|done|${task.id}`, new Date("2026-01-02T00:00:00Z"));
+  expect(vi.mocked(editMessageText)).toHaveBeenCalledWith(123, 456, expect.stringMatching(/couldn't find|not found/i), []);
+  const [row] = await db.select().from(tasks);
+  expect(row.completedAt).toEqual(completedAt); // not overwritten by the stale press
+  expect(vi.mocked(answerCallbackQuery)).toHaveBeenCalledWith("cb-1");
+});
+
+test("a stale drop action on an already-completed task leaves it completed", async () => {
   const [task] = await db
     .insert(tasks)
     .values({ type: "todo", title: "x", status: "completed", completedAt: new Date() })
     .returning();
-  await expect(handleCallbackQuery(123, 456, "cb-1", `td|done|${task.id}`, new Date())).resolves.not.toThrow();
-  expect(vi.mocked(answerCallbackQuery)).toHaveBeenCalled();
+  await handleCallbackQuery(123, 456, "cb-1", `td|drop|${task.id}`, new Date());
+  expect(vi.mocked(editMessageText)).toHaveBeenCalledWith(123, 456, expect.stringMatching(/couldn't find|not found/i), []);
+  const [row] = await db.select().from(tasks);
+  expect(row.status).toBe("completed");
+});
+
+test("answerCallbackQuery still fires even if the action throws (e.g. a malformed task id)", async () => {
+  await expect(handleCallbackQuery(123, 456, "cb-1", "td|done|not-a-uuid", new Date())).resolves.not.toThrow();
+  expect(vi.mocked(answerCallbackQuery)).toHaveBeenCalledWith("cb-1");
 });
 
 test("an unknown action answers the callback and does not throw", async () => {

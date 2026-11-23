@@ -80,6 +80,7 @@ too.
 | `TELEGRAM_BOT_TOKEN` | The bot token from @BotFather — see §7.1. |
 | `TELEGRAM_WEBHOOK_SECRET` | Any long random string (e.g. `openssl rand -hex 32`). Checked against the `X-Telegram-Bot-Api-Secret-Token` header on every webhook call (`lib/telegram/webhook-auth.ts`) — same bearer-secret shape as `CRON_SECRET`. Must be set to the **exact same value** passed as `secret_token` when registering the webhook in §7.3. |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | Comma-separated numeric Telegram chat ids — see §7.1. A message from any chat not in this list is fully ignored. |
+| `TELEGRAM_OWNER_CHAT_ID` | Callum's own numeric Telegram chat id (one value, not comma-separated) — the only chat that receives overdue-to-do nags, the 9am digest, and the 9pm sweep (`lib/telegram/client.ts`'s `getOwnerChatId`). Separate from `TELEGRAM_ALLOWED_CHAT_IDS` above, which also includes anyone else allowed to use the bot. Missing or non-numeric makes every `/api/cron/check-reminders` run fail. |
 | `GROQ_API_KEY` | A free API key from [console.groq.com](https://console.groq.com) (no card needed) — used for voice transcription and structured message parsing (`lib/groq/client.ts`). Originally built against OpenAI, switched after the bot's first live run hit `insufficient_quota` with no billing set up; Groq's API is OpenAI-compatible and its free tier is far more than this single-user bot will ever use. |
 | `POSTING_SCHEDULE_SHEET_CSV_URL` | The posting-schedule Google Sheet's own CSV export URL — see §8. |
 
@@ -313,8 +314,12 @@ Skipping this step first means the webhook replies with nothing and
 `/content-ideas` fails to load, since neither table exists yet.
 
 Then set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
-`TELEGRAM_ALLOWED_CHAT_IDS`, and `GROQ_API_KEY` in Vercel (§2), and
-redeploy.
+`TELEGRAM_ALLOWED_CHAT_IDS`, `TELEGRAM_OWNER_CHAT_ID`, and `GROQ_API_KEY`
+in Vercel (§2), and redeploy.
+
+The "never forget" nag/digest/sweep system (migration `0012`) also needs
+its own migration run the same way, and `TELEGRAM_OWNER_CHAT_ID` set —
+skipping either means `/api/cron/check-reminders` 500s on every run.
 
 ### 7.3 Register the webhook
 

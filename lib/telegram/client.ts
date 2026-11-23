@@ -64,9 +64,12 @@ export async function answerCallbackQuery(callbackQueryId: string, text?: string
 
 /** The only chat proactive nags/digests/sweeps ever target — distinct from the plural `TELEGRAM_ALLOWED_CHAT_IDS`, which also includes others. */
 export function getOwnerChatId(): number {
-  const value = process.env.TELEGRAM_OWNER_CHAT_ID;
+  const value = process.env.TELEGRAM_OWNER_CHAT_ID?.trim();
   const chatId = Number(value);
-  if (!value || Number.isNaN(chatId)) {
+  // `Number("")` and `Number("  ")` are both 0, not NaN, so a NaN-only
+  // check would silently accept an unset-looking value as chat id 0 —
+  // never a real Telegram chat id (final-review Minor).
+  if (!value || Number.isNaN(chatId) || chatId === 0) {
     throw new Error("TELEGRAM_OWNER_CHAT_ID environment variable is not set");
   }
   return chatId;

@@ -274,3 +274,30 @@ test("a callback_query from a disallowed chat is ignored", async () => {
   expect(res.status).toBe(200);
   expect(mockHandleCallbackQuery).not.toHaveBeenCalled();
 });
+
+test("a callback_query missing data is ignored rather than crashing", async () => {
+  const update = {
+    update_id: 997,
+    callback_query: { id: "cb-3", message: { message_id: 1, chat: { id: ALLOWED_CHAT_ID } } },
+  };
+  const res = await POST(updateRequest(update));
+  expect(res.status).toBe(200);
+  expect(mockHandleCallbackQuery).not.toHaveBeenCalled();
+});
+
+test("a callback_query missing its original message is ignored rather than crashing", async () => {
+  const update = { update_id: 996, callback_query: { id: "cb-4", data: "td|done|task-1" } };
+  const res = await POST(updateRequest(update));
+  expect(res.status).toBe(200);
+  expect(mockHandleCallbackQuery).not.toHaveBeenCalled();
+});
+
+test("the webhook still returns 200 if handleCallbackQuery throws", async () => {
+  mockHandleCallbackQuery.mockRejectedValueOnce(new Error("db down"));
+  const update = {
+    update_id: 995,
+    callback_query: { id: "cb-5", data: "td|done|task-1", message: { message_id: 1, chat: { id: ALLOWED_CHAT_ID } } },
+  };
+  const res = await POST(updateRequest(update));
+  expect(res.status).toBe(200);
+});

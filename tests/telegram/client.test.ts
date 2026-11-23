@@ -95,6 +95,18 @@ test("getOwnerChatId returns the numeric chat id", () => {
   expect(getOwnerChatId()).toBe(5835594329);
 });
 
+test("getOwnerChatId throws for a non-numeric value", () => {
+  process.env.TELEGRAM_OWNER_CHAT_ID = "abc";
+  expect(() => getOwnerChatId()).toThrow("TELEGRAM_OWNER_CHAT_ID");
+});
+
+test("getOwnerChatId throws for a whitespace-only value", () => {
+  // Number("  ") is 0, not NaN — a naive NaN-only check would let this
+  // through as chat id 0, which Telegram never assigns (final-review).
+  process.env.TELEGRAM_OWNER_CHAT_ID = "  ";
+  expect(() => getOwnerChatId()).toThrow("TELEGRAM_OWNER_CHAT_ID");
+});
+
 test("getOwnerChatId throws when unset", () => {
   delete process.env.TELEGRAM_OWNER_CHAT_ID;
   expect(() => getOwnerChatId()).toThrow("TELEGRAM_OWNER_CHAT_ID");

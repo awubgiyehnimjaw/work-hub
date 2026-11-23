@@ -403,6 +403,10 @@ export async function maybeSendMorningDigest(now: Date): Promise<{ sent: boolean
     return { sent: false };
   }
 
+  // Resolved before the queries (not just before use), same convention as
+  // checkOverdueTodoNags's own ownerChatId ruling.
+  const ownerChatId = getOwnerChatId();
+
   const base = and(eq(tasks.type, "todo"), eq(tasks.status, "active"), notSnoozed(now));
   const tomorrowStart = startOfTomorrowSgt(now);
 
@@ -412,9 +416,8 @@ export async function maybeSendMorningDigest(now: Date): Promise<{ sent: boolean
     db.select().from(tasks).where(and(base, isNull(tasks.dueAt))),
   ]);
 
-  await db.update(syncState).set({ morningDigestSentAt: now }).where(eq(syncState.id, state.id));
-
   if (overdue.length === 0 && dueToday.length === 0 && undated.length === 0) {
+    await db.update(syncState).set({ morningDigestSentAt: now }).where(eq(syncState.id, state.id));
     return { sent: false };
   }
 
@@ -423,7 +426,13 @@ export async function maybeSendMorningDigest(now: Date): Promise<{ sent: boolean
     ...dueToday.map((task) => `Due today: ${dueLine(task)}`),
     ...undated.map((task) => `No date: ${task.title}`),
   ];
-  await sendMessage(getOwnerChatId(), lines.join("\n"));
+  // The guard is written only after a successful send (final-review
+  // Important: writing it before sendMessage meant a failed send — a
+  // network error, a Telegram rate limit, an over-length digest —
+  // permanently lost that day's digest instead of retrying on the next
+  // 15-minute cron tick).
+  await sendMessage(ownerChatId, lines.join("\n"));
+  await db.update(syncState).set({ morningDigestSentAt: now }).where(eq(syncState.id, state.id));
 
   return { sent: true };
 }
@@ -447,6 +456,10 @@ export async function maybeSendEveningSweep(now: Date): Promise<{ sent: boolean 
     return { sent: false };
   }
 
+  // Resolved before the query, same convention as checkOverdueTodoNags's
+  // own ownerChatId ruling.
+  const ownerChatId = getOwnerChatId();
+
   // "Overdue OR due today" collapses to one bound: every overdue dueAt
   // (<= now) is necessarily also before tomorrowStart, since tomorrowStart
   // is always in the future relative to now.
@@ -464,17 +477,18 @@ export async function maybeSendEveningSweep(now: Date): Promise<{ sent: boolean 
       ),
     );
 
-  await db.update(syncState).set({ eveningSweepSentAt: now }).where(eq(syncState.id, state.id));
-
   if (candidates.length === 0) {
+    await db.update(syncState).set({ eveningSweepSentAt: now }).where(eq(syncState.id, state.id));
     return { sent: false };
   }
 
-  const ownerChatId = getOwnerChatId();
+  // The guard is written only after every message sends successfully —
+  // same reasoning as maybeSendMorningDigest's own fix.
   await sendMessage(ownerChatId, "Still open:");
   for (const task of candidates) {
     await sendSweepItemMessage(ownerChatId, task);
   }
+  await db.update(syncState).set({ eveningSweepSentAt: now }).where(eq(syncState.id, state.id));
 
   return { sent: true };
 }
