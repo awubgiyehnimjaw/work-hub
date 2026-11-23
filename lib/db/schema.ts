@@ -9,7 +9,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const taskTypeEnum = pgEnum("task_type", ["review", "todo"]);
-export const taskStatusEnum = pgEnum("task_status", ["active", "completed"]);
+export const taskStatusEnum = pgEnum("task_status", ["active", "completed", "dismissed"]);
 export const suggestionCategoryEnum = pgEnum("suggestion_category", [
   "ulti",
   "arc",
@@ -78,6 +78,10 @@ export const tasks = pgTable("tasks", {
   dueWeekAheadNotifiedAt: timestamp("due_week_ahead_notified_at"),
   dueThreeDayNotifiedAt: timestamp("due_three_day_notified_at"),
   dueOneDayNotifiedAt: timestamp("due_one_day_notified_at"),
+  // Last time an overdue-to-do nag was sent on Telegram — independent of
+  // dueNotifiedAt (the one-shot web push above). Null means never nagged;
+  // checkOverdueTodoNags re-nags once this is >=3 hours old.
+  telegramNagSentAt: timestamp("telegram_nag_sent_at"),
 });
 
 export const contentIdeas = pgTable("content_ideas", {
@@ -138,6 +142,10 @@ export const syncState = pgTable("sync_state", {
   // re-checked every 15 minutes for the rest of that day's window, and a
   // genuine fetch failure (left unset) gets retried on the next tick.
   postingScheduleCheckedAt: timestamp("posting_schedule_checked_at"),
+  // Same once-per-day-window guard pattern, for the 9am SGT morning digest
+  // and 9pm SGT evening sweep Telegram messages.
+  morningDigestSentAt: timestamp("morning_digest_sent_at"),
+  eveningSweepSentAt: timestamp("evening_sweep_sent_at"),
 });
 
 // De-dup for the Telegram webhook: `updateId` is Telegram's own `update_id`,
