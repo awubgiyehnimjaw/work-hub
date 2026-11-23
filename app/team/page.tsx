@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import PostingScheduleTab, { type PostingScheduleEntry } from "../components/team/PostingScheduleTab";
+import ReviewsTab, { type ReviewTask } from "../components/team/ReviewsTab";
 import TasksTab, { type TaskTodo } from "../components/team/TasksTab";
 
 interface ApiTask {
@@ -42,6 +43,9 @@ export default function TeamDashboardPage() {
   const todos: TaskTodo[] = tasks
     .filter((task) => task.type === "todo")
     .map((task) => ({ id: task.id, title: task.title, dueAt: task.dueAt }));
+  const reviews: ReviewTask[] = tasks
+    .filter((task) => task.type === "review")
+    .map((task) => ({ id: task.id, title: task.title, clientName: task.clientName, isStale: task.isStale }));
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 20, fontFamily: "inherit" }}>
@@ -100,6 +104,8 @@ export default function TeamDashboardPage() {
         <div style={{ padding: 24 }}>
           {activeTab === "tasks" ? (
             <TasksTab todos={todos} />
+          ) : activeTab === "reviews" ? (
+            <ReviewsTab reviews={reviews} />
           ) : activeTab === "posting-schedule" ? (
             <PostingScheduleTab entries={postingSchedule} />
           ) : (
