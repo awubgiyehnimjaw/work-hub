@@ -24,27 +24,57 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "content-ideas", label: "Content Ideas" },
 ];
 
+type LoadState = "loading" | "ready" | "error";
+
+/**
+ * A failed or still-in-flight fetch must never look like "nothing to do" —
+ * a confident zero-count dashboard is worse than a visible loading/error
+ * state (same `"loading" | "ready" | "error"` pattern the existing
+ * `PostingSchedule` dashboard card already uses). Tracked per source so
+ * one source failing doesn't block the tabs that loaded fine.
+ */
 export default function TeamDashboardPage() {
   const [activeTab, setActiveTab] = useState<Tab>("tasks");
   const [postingSchedule, setPostingSchedule] = useState<PostingScheduleEntry[]>([]);
   const [tasks, setTasks] = useState<ApiTask[]>([]);
   const [contentIdeas, setContentIdeas] = useState<ContentIdea[]>([]);
+  const [postingScheduleState, setPostingScheduleState] = useState<LoadState>("loading");
+  const [tasksState, setTasksState] = useState<LoadState>("loading");
+  const [contentIdeasState, setContentIdeasState] = useState<LoadState>("loading");
 
   useEffect(() => {
     fetch("/api/posting-schedule/all")
-      .then((res) => (res.ok ? res.json() : []))
-      .then(setPostingSchedule)
-      .catch(() => setPostingSchedule([]));
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load the posting schedule");
+        return res.json();
+      })
+      .then((data) => {
+        setPostingSchedule(data);
+        setPostingScheduleState("ready");
+      })
+      .catch(() => setPostingScheduleState("error"));
 
     fetch("/api/tasks")
-      .then((res) => (res.ok ? res.json() : []))
-      .then(setTasks)
-      .catch(() => setTasks([]));
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load tasks");
+        return res.json();
+      })
+      .then((data) => {
+        setTasks(data);
+        setTasksState("ready");
+      })
+      .catch(() => setTasksState("error"));
 
     fetch("/api/content-ideas/all")
-      .then((res) => (res.ok ? res.json() : []))
-      .then(setContentIdeas)
-      .catch(() => setContentIdeas([]));
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load content ideas");
+        return res.json();
+      })
+      .then((data) => {
+        setContentIdeas(data);
+        setContentIdeasState("ready");
+      })
+      .catch(() => setContentIdeasState("error"));
   }, []);
 
   const todos: TaskTodo[] = tasks
@@ -110,11 +140,33 @@ export default function TeamDashboardPage() {
 
         <div style={{ padding: 24 }}>
           {activeTab === "tasks" ? (
-            <TasksTab todos={todos} />
+            tasksState === "loading" ? (
+              <p style={{ color: "#595959" }}>Loading…</p>
+            ) : tasksState === "error" ? (
+              <p style={{ color: "#595959" }} role="alert">Couldn&apos;t load tasks — try reloading the page.</p>
+            ) : (
+              <TasksTab todos={todos} />
+            )
           ) : activeTab === "reviews" ? (
-            <ReviewsTab reviews={reviews} />
+            tasksState === "loading" ? (
+              <p style={{ color: "#595959" }}>Loading…</p>
+            ) : tasksState === "error" ? (
+              <p style={{ color: "#595959" }} role="alert">Couldn&apos;t load reviews — try reloading the page.</p>
+            ) : (
+              <ReviewsTab reviews={reviews} />
+            )
           ) : activeTab === "posting-schedule" ? (
-            <PostingScheduleTab entries={postingSchedule} />
+            postingScheduleState === "loading" ? (
+              <p style={{ color: "#595959" }}>Loading…</p>
+            ) : postingScheduleState === "error" ? (
+              <p style={{ color: "#595959" }} role="alert">Couldn&apos;t load the posting schedule — try reloading the page.</p>
+            ) : (
+              <PostingScheduleTab entries={postingSchedule} />
+            )
+          ) : contentIdeasState === "loading" ? (
+            <p style={{ color: "#595959" }}>Loading…</p>
+          ) : contentIdeasState === "error" ? (
+            <p style={{ color: "#595959" }} role="alert">Couldn&apos;t load content ideas — try reloading the page.</p>
           ) : (
             <ContentIdeasTab ideas={contentIdeas} />
           )}

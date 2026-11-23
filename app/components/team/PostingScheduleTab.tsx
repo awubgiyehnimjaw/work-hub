@@ -28,7 +28,7 @@ const STATUS_DOT: Record<PostingScheduleStatus, TeamDotVariant> = {
   "due-soon": "outline",
   upcoming: "none",
   done: "ghost",
-  "on-hold": "ghost",
+  "on-hold": "ghost-outline",
 };
 
 const pillStyle = (on: boolean) => ({

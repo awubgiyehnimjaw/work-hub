@@ -1,8 +1,8 @@
 import type { CSSProperties } from "react";
 
-export type TeamDotVariant = "filled" | "outline" | "ghost" | "none";
+export type TeamDotVariant = "filled" | "outline" | "ghost" | "ghost-outline" | "none";
 
-/** Status dot read by shape/weight, never color — matches the mockup's `.td-dot`/`.td-dot.outline`/`.td-dot.ghost`. */
+/** Status dot read by shape/weight, never color — matches the mockup's `.td-dot`/`.td-dot.outline`/`.td-dot.ghost`, plus `ghost-outline` for "on hold" (grey outline, distinct from "done"'s solid grey). */
 export default function TeamDot({ variant }: { variant: TeamDotVariant }) {
   if (variant === "none") return null;
 
@@ -18,6 +18,9 @@ export default function TeamDot({ variant }: { variant: TeamDotVariant }) {
   } else if (variant === "outline") {
     style.background = "#fff";
     style.border = "1.5px solid #111";
+  } else if (variant === "ghost-outline") {
+    style.background = "#fff";
+    style.border = "1.5px solid #ccc";
   } else {
     style.background = "#ccc";
   }
