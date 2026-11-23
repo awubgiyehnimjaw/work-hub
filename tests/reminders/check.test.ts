@@ -2,13 +2,16 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { calendarEventsCache, postingScheduleCompletions, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
-import { checkDueTodos, checkUpcomingDueTodos, maybeSendPostingScheduleDigest, maybeSendWeeklyDigest } from "@/lib/reminders/check";
+import { checkDueTodos, checkOverdueTodoNags, checkUpcomingDueTodos, maybeSendPostingScheduleDigest, maybeSendWeeklyDigest } from "@/lib/reminders/check";
 import { sendPush } from "@/lib/push/send";
+import { sendNagMessage } from "@/lib/telegram/todo-messages";
 import { entryKey, fetchPostingScheduleCsv } from "@/lib/posting-schedule/sheet";
 
 vi.mock("@/lib/push/send", () => ({
   sendPush: vi.fn().mockResolvedValue(undefined),
 }));
+
+vi.mock("@/lib/telegram/todo-messages", () => ({ sendNagMessage: vi.fn().mockResolvedValue(undefined) }));
 
 vi.mock("@/lib/posting-schedule/sheet", async () => {
   const actual = await vi.importActual<typeof import("@/lib/posting-schedule/sheet")>("@/lib/posting-schedule/sheet");
@@ -17,6 +20,7 @@ vi.mock("@/lib/posting-schedule/sheet", async () => {
 
 const sendPushMock = vi.mocked(sendPush);
 const fetchPostingScheduleCsvMock = vi.mocked(fetchPostingScheduleCsv);
+const sendNagMessageMock = vi.mocked(sendNagMessage);
 
 beforeEach(async () => {
   await db.delete(tasks);
@@ -26,6 +30,8 @@ beforeEach(async () => {
   await db.delete(postingScheduleCompletions);
   sendPushMock.mockClear();
   fetchPostingScheduleCsvMock.mockReset();
+  sendNagMessageMock.mockClear();
+  process.env.TELEGRAM_OWNER_CHAT_ID = "999";
 
   await db.insert(pushSubscriptions).values({
     endpoint: "https://push.example.com/sub-1",
@@ -384,4 +390,62 @@ test("checkUpcomingDueTodos fires the 3-day band, then later the 1-day band, for
   const [row] = await db.select().from(tasks).where(eq(tasks.id, task.id));
   expect(row.dueThreeDayNotifiedAt).not.toBeNull();
   expect(row.dueOneDayNotifiedAt).not.toBeNull();
+});
+
+test("checkOverdueTodoNags nags an overdue to-do that's never been nagged", async () => {
+  const [task] = await db
+    .insert(tasks)
+    .values({ type: "todo", title: "x", status: "active", dueAt: new Date(Date.now() - 60_000) })
+    .returning();
+  const result = await checkOverdueTodoNags(new Date());
+  expect(result).toEqual({ notified: 1 });
+  expect(sendNagMessageMock).toHaveBeenCalledWith(999, expect.objectContaining({ id: task.id }));
+  const [row] = await db.select().from(tasks);
+  expect(row.telegramNagSentAt).not.toBeNull();
+});
+
+test("checkOverdueTodoNags skips a to-do nagged less than 3 hours ago", async () => {
+  await db.insert(tasks).values({
+    type: "todo",
+    title: "x",
+    status: "active",
+    dueAt: new Date(Date.now() - 60_000),
+    telegramNagSentAt: new Date(Date.now() - 60 * 60 * 1000),
+  });
+  expect(await checkOverdueTodoNags(new Date())).toEqual({ notified: 0 });
+});
+
+test("checkOverdueTodoNags re-nags a to-do last nagged over 3 hours ago", async () => {
+  await db.insert(tasks).values({
+    type: "todo",
+    title: "x",
+    status: "active",
+    dueAt: new Date(Date.now() - 60_000),
+    telegramNagSentAt: new Date(Date.now() - 4 * 60 * 60 * 1000),
+  });
+  expect(await checkOverdueTodoNags(new Date())).toEqual({ notified: 1 });
+});
+
+test("checkOverdueTodoNags does not nag during quiet hours and leaves telegramNagSentAt untouched", async () => {
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: new Date("2026-01-01T00:00:00Z") });
+  const quietNow = new Date("2026-01-01T16:00:00Z"); // midnight SGT
+  expect(await checkOverdueTodoNags(quietNow)).toEqual({ notified: 0 });
+  const [row] = await db.select().from(tasks);
+  expect(row.telegramNagSentAt).toBeNull();
+});
+
+test("checkOverdueTodoNags skips a snoozed to-do", async () => {
+  await db.insert(tasks).values({
+    type: "todo",
+    title: "x",
+    status: "active",
+    dueAt: new Date(Date.now() - 60_000),
+    snoozedUntil: new Date(Date.now() + 60 * 60 * 1000),
+  });
+  expect(await checkOverdueTodoNags(new Date())).toEqual({ notified: 0 });
+});
+
+test("checkOverdueTodoNags skips a dismissed to-do even if overdue", async () => {
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "dismissed", dueAt: new Date(Date.now() - 60_000) });
+  expect(await checkOverdueTodoNags(new Date())).toEqual({ notified: 0 });
 });

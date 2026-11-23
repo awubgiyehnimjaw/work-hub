@@ -1,8 +1,11 @@
-import { and, eq, gt, gte, isNotNull, isNull, lte } from "drizzle-orm";
+import { and, eq, gt, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db/client";
 import { calendarEventsCache, postingScheduleCompletions, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
 import { sendPush } from "@/lib/push/send";
+import { getOwnerChatId } from "@/lib/telegram/client";
+import { sendNagMessage } from "@/lib/telegram/todo-messages";
+import { isQuietHoursSgt } from "@/lib/reminders/sgt-time";
 import {
   fetchPostingScheduleCsv,
   filterByNotCompleted,
@@ -10,6 +13,13 @@ import {
   parsePostingScheduleCsv,
   sgtDateKey,
 } from "@/lib/posting-schedule/sheet";
+
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+
+/** `tasks` rows that aren't currently snoozed — same filter `lib/telegram/chat-tools.ts` uses. */
+function notSnoozed(now: Date) {
+  return or(isNull(tasks.snoozedUntil), lte(tasks.snoozedUntil, now));
+}
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
@@ -321,4 +331,45 @@ export async function maybeSendPostingScheduleDigest(now: Date): Promise<{ sent:
   }
 
   return { sent: true };
+}
+
+/**
+ * Re-nags Callum on Telegram for every overdue, non-snoozed to-do, every 3
+ * hours until he acts via one of the nag message's buttons — independent of
+ * `dueNotifiedAt` (the one-shot web push above), tracked by its own
+ * `telegramNagSentAt` column. Suppressed entirely during quiet hours
+ * (11pm-8am SGT), without touching `telegramNagSentAt`, so the next nag
+ * after quiet hours end isn't delayed by the skipped window.
+ */
+export async function checkOverdueTodoNags(now: Date): Promise<{ notified: number }> {
+  if (isQuietHoursSgt(now)) {
+    return { notified: 0 };
+  }
+
+  // Resolved before the query (not just before use) so a misconfigured
+  // TELEGRAM_OWNER_CHAT_ID fails loudly on every tick rather than only
+  // the ticks that happen to find an overdue to-do.
+  const ownerChatId = getOwnerChatId();
+
+  const renagCutoff = new Date(now.getTime() - THREE_HOURS_MS);
+  const candidates = await db
+    .select()
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.type, "todo"),
+        eq(tasks.status, "active"),
+        isNotNull(tasks.dueAt),
+        lte(tasks.dueAt, now),
+        notSnoozed(now),
+        or(isNull(tasks.telegramNagSentAt), lte(tasks.telegramNagSentAt, renagCutoff)),
+      ),
+    );
+
+  for (const task of candidates) {
+    await sendNagMessage(ownerChatId, task);
+    await db.update(tasks).set({ telegramNagSentAt: now }).where(eq(tasks.id, task.id));
+  }
+
+  return { notified: candidates.length };
 }
