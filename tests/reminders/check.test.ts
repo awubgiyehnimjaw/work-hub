@@ -2,14 +2,17 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { calendarEventsCache, postingScheduleCompletions, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
-import { checkDueTodos, checkOverdueTodoNags, checkUpcomingDueTodos, maybeSendPostingScheduleDigest, maybeSendWeeklyDigest } from "@/lib/reminders/check";
+import { checkDueTodos, checkOverdueTodoNags, checkUpcomingDueTodos, maybeSendMorningDigest, maybeSendPostingScheduleDigest, maybeSendWeeklyDigest } from "@/lib/reminders/check";
 import { sendPush } from "@/lib/push/send";
+import { sendMessage } from "@/lib/telegram/client";
 import { sendNagMessage } from "@/lib/telegram/todo-messages";
 import { entryKey, fetchPostingScheduleCsv } from "@/lib/posting-schedule/sheet";
 
 vi.mock("@/lib/push/send", () => ({
   sendPush: vi.fn().mockResolvedValue(undefined),
 }));
+
+vi.mock("@/lib/telegram/client", () => ({ sendMessage: vi.fn().mockResolvedValue(undefined), getOwnerChatId: vi.fn(() => 999) }));
 
 vi.mock("@/lib/telegram/todo-messages", () => ({ sendNagMessage: vi.fn().mockResolvedValue(undefined) }));
 
@@ -21,6 +24,7 @@ vi.mock("@/lib/posting-schedule/sheet", async () => {
 const sendPushMock = vi.mocked(sendPush);
 const fetchPostingScheduleCsvMock = vi.mocked(fetchPostingScheduleCsv);
 const sendNagMessageMock = vi.mocked(sendNagMessage);
+const sendMessageMock = vi.mocked(sendMessage);
 
 beforeEach(async () => {
   await db.delete(tasks);
@@ -31,6 +35,7 @@ beforeEach(async () => {
   sendPushMock.mockClear();
   fetchPostingScheduleCsvMock.mockReset();
   sendNagMessageMock.mockClear();
+  sendMessageMock.mockClear();
   process.env.TELEGRAM_OWNER_CHAT_ID = "999";
 
   await db.insert(pushSubscriptions).values({
@@ -448,4 +453,50 @@ test("checkOverdueTodoNags skips a snoozed to-do", async () => {
 test("checkOverdueTodoNags skips a dismissed to-do even if overdue", async () => {
   await db.insert(tasks).values({ type: "todo", title: "x", status: "dismissed", dueAt: new Date(Date.now() - 60_000) });
   expect(await checkOverdueTodoNags(new Date())).toEqual({ notified: 0 });
+});
+
+test("maybeSendMorningDigest sends due-today, overdue, and undated active to-dos in the 9am SGT window", async () => {
+  const windowNow = new Date("2026-01-01T01:00:00Z"); // 9am SGT
+  await db.insert(tasks).values([
+    { type: "todo", title: "Overdue one", status: "active", dueAt: new Date("2025-12-31T00:00:00Z") },
+    { type: "todo", title: "Due today", status: "active", dueAt: new Date("2026-01-01T10:00:00Z") },
+    { type: "todo", title: "No date", status: "active", dueAt: null },
+    { type: "todo", title: "Done already", status: "completed", dueAt: new Date("2025-12-31T00:00:00Z") },
+    { type: "todo", title: "Dropped", status: "dismissed", dueAt: new Date("2025-12-31T00:00:00Z") },
+  ]);
+  const result = await maybeSendMorningDigest(windowNow);
+  expect(result).toEqual({ sent: true });
+  const [, body] = sendMessageMock.mock.calls[0];
+  expect(body).toContain("Overdue one");
+  expect(body).toContain("Due today");
+  expect(body).toContain("No date");
+  expect(body).not.toContain("Done already");
+  expect(body).not.toContain("Dropped");
+});
+
+test("maybeSendMorningDigest is silent, but still marks the day checked, when nothing is due", async () => {
+  const result = await maybeSendMorningDigest(new Date("2026-01-01T01:00:00Z"));
+  expect(result).toEqual({ sent: false });
+  expect(sendMessageMock).not.toHaveBeenCalled();
+});
+
+test("maybeSendMorningDigest only fires once per day", async () => {
+  const now = new Date("2026-01-01T01:00:00Z");
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: null });
+  await maybeSendMorningDigest(now);
+  sendMessageMock.mockClear();
+  await maybeSendMorningDigest(new Date("2026-01-01T01:10:00Z"));
+  expect(sendMessageMock).not.toHaveBeenCalled();
+});
+
+test("maybeSendMorningDigest excludes a snoozed to-do", async () => {
+  await db.insert(tasks).values({ type: "todo", title: "Snoozed", status: "active", dueAt: null, snoozedUntil: new Date(Date.now() + 60_000) });
+  await maybeSendMorningDigest(new Date("2026-01-01T01:00:00Z"));
+  const [, body] = sendMessageMock.mock.calls[0] ?? [undefined, ""];
+  expect(body).not.toContain("Snoozed");
+});
+
+test("maybeSendMorningDigest does nothing outside the 9am SGT window", async () => {
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: null });
+  expect(await maybeSendMorningDigest(new Date("2026-01-01T10:00:00Z"))).toEqual({ sent: false });
 });

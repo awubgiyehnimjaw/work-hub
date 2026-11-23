@@ -1,11 +1,12 @@
-import { and, eq, gt, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, gte, isNotNull, isNull, lt, lte, or } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db/client";
 import { calendarEventsCache, postingScheduleCompletions, pushSubscriptions, syncState, tasks } from "@/lib/db/schema";
 import { sendPush } from "@/lib/push/send";
-import { getOwnerChatId } from "@/lib/telegram/client";
+import { formatLocalDateTime } from "@/lib/groq/client";
+import { getOwnerChatId, sendMessage } from "@/lib/telegram/client";
 import { sendNagMessage } from "@/lib/telegram/todo-messages";
-import { isQuietHoursSgt } from "@/lib/reminders/sgt-time";
+import { isQuietHoursSgt, startOfTomorrowSgt } from "@/lib/reminders/sgt-time";
 import {
   fetchPostingScheduleCsv,
   filterByNotCompleted,
@@ -372,4 +373,53 @@ export async function checkOverdueTodoNags(now: Date): Promise<{ notified: numbe
   }
 
   return { notified: candidates.length };
+}
+
+function dueLine(task: { title: string; dueAt: Date | null }): string {
+  return task.dueAt ? `${task.title} (due ${formatLocalDateTime(task.dueAt)})` : task.title;
+}
+
+/**
+ * Sends a "here's today" Telegram digest once a day, in the same 9am SGT
+ * window `maybeSendPostingScheduleDigest` already checks
+ * (`POSTING_SCHEDULE_CHECK_HOUR_UTC`) — overdue, due-today, and undated
+ * active to-dos. Silent (but still marks the day checked) when all three
+ * are empty, same "set it whether or not anything was sent" pattern as
+ * `postingScheduleCheckedAt`.
+ */
+export async function maybeSendMorningDigest(now: Date): Promise<{ sent: boolean }> {
+  if (!isInPostingScheduleWindow(now)) {
+    return { sent: false };
+  }
+
+  const state = await getSyncStateRow();
+  const alreadyCheckedToday =
+    state.morningDigestSentAt !== null && now.getTime() - state.morningDigestSentAt.getTime() < TWENTY_HOURS_MS;
+  if (alreadyCheckedToday) {
+    return { sent: false };
+  }
+
+  const base = and(eq(tasks.type, "todo"), eq(tasks.status, "active"), notSnoozed(now));
+  const tomorrowStart = startOfTomorrowSgt(now);
+
+  const [overdue, dueToday, undated] = await Promise.all([
+    db.select().from(tasks).where(and(base, isNotNull(tasks.dueAt), lte(tasks.dueAt, now))),
+    db.select().from(tasks).where(and(base, isNotNull(tasks.dueAt), gt(tasks.dueAt, now), lt(tasks.dueAt, tomorrowStart))),
+    db.select().from(tasks).where(and(base, isNull(tasks.dueAt))),
+  ]);
+
+  await db.update(syncState).set({ morningDigestSentAt: now }).where(eq(syncState.id, state.id));
+
+  if (overdue.length === 0 && dueToday.length === 0 && undated.length === 0) {
+    return { sent: false };
+  }
+
+  const lines = [
+    ...overdue.map((task) => `Overdue: ${dueLine(task)}`),
+    ...dueToday.map((task) => `Due today: ${dueLine(task)}`),
+    ...undated.map((task) => `No date: ${task.title}`),
+  ];
+  await sendMessage(getOwnerChatId(), lines.join("\n"));
+
+  return { sent: true };
 }
