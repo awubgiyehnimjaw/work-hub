@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
-import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
+import { answerCallbackQuery, downloadFile, editMessageText, getFilePath, getOwnerChatId, sendMessage } from "@/lib/telegram/client";
 
 beforeAll(() => {
   process.env.TELEGRAM_BOT_TOKEN = "test-bot-token";
@@ -45,4 +45,55 @@ test("throws when TELEGRAM_BOT_TOKEN is not set", async () => {
   delete process.env.TELEGRAM_BOT_TOKEN;
   await expect(sendMessage(123, "hi")).rejects.toThrow("TELEGRAM_BOT_TOKEN");
   process.env.TELEGRAM_BOT_TOKEN = original;
+});
+
+test("sendMessage includes reply_markup when buttons are passed", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await sendMessage(123, "hello", [[{ text: "✅ Done", callback_data: "td|done|abc" }]]);
+  const [, init] = fetchMock.mock.calls[0];
+  expect(JSON.parse(init.body)).toEqual({
+    chat_id: 123,
+    text: "hello",
+    reply_markup: { inline_keyboard: [[{ text: "✅ Done", callback_data: "td|done|abc" }]] },
+  });
+});
+
+test("editMessageText with an empty keyboard clears existing buttons", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await editMessageText(123, 456, "done", []);
+  const [url, init] = fetchMock.mock.calls[0];
+  expect(String(url)).toContain("/editMessageText");
+  expect(JSON.parse(init.body)).toEqual({
+    chat_id: 123,
+    message_id: 456,
+    text: "done",
+    reply_markup: { inline_keyboard: [] },
+  });
+});
+
+test("editMessageText without replyMarkup omits reply_markup entirely", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 200 })));
+  await editMessageText(123, 456, "hello");
+  expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1].body)).toEqual({ chat_id: 123, message_id: 456, text: "hello" });
+});
+
+test("answerCallbackQuery posts the callback query id", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await answerCallbackQuery("cb-1", "Done");
+  const [url, init] = fetchMock.mock.calls[0];
+  expect(String(url)).toContain("/answerCallbackQuery");
+  expect(JSON.parse(init.body)).toEqual({ callback_query_id: "cb-1", text: "Done" });
+});
+
+test("getOwnerChatId returns the numeric chat id", () => {
+  process.env.TELEGRAM_OWNER_CHAT_ID = "5835594329";
+  expect(getOwnerChatId()).toBe(5835594329);
+});
+
+test("getOwnerChatId throws when unset", () => {
+  delete process.env.TELEGRAM_OWNER_CHAT_ID;
+  expect(() => getOwnerChatId()).toThrow("TELEGRAM_OWNER_CHAT_ID");
 });
