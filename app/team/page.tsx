@@ -2,6 +2,16 @@
 
 import { useEffect, useState } from "react";
 import PostingScheduleTab, { type PostingScheduleEntry } from "../components/team/PostingScheduleTab";
+import TasksTab, { type TaskTodo } from "../components/team/TasksTab";
+
+interface ApiTask {
+  id: string;
+  type: "review" | "todo";
+  title: string;
+  clientName: string | null;
+  isStale: boolean;
+  dueAt: string | null;
+}
 
 type Tab = "tasks" | "reviews" | "posting-schedule" | "content-ideas";
 
@@ -15,13 +25,23 @@ const TABS: { id: Tab; label: string }[] = [
 export default function TeamDashboardPage() {
   const [activeTab, setActiveTab] = useState<Tab>("tasks");
   const [postingSchedule, setPostingSchedule] = useState<PostingScheduleEntry[]>([]);
+  const [tasks, setTasks] = useState<ApiTask[]>([]);
 
   useEffect(() => {
     fetch("/api/posting-schedule/all")
       .then((res) => (res.ok ? res.json() : []))
       .then(setPostingSchedule)
       .catch(() => setPostingSchedule([]));
+
+    fetch("/api/tasks")
+      .then((res) => (res.ok ? res.json() : []))
+      .then(setTasks)
+      .catch(() => setTasks([]));
   }, []);
+
+  const todos: TaskTodo[] = tasks
+    .filter((task) => task.type === "todo")
+    .map((task) => ({ id: task.id, title: task.title, dueAt: task.dueAt }));
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 20, fontFamily: "inherit" }}>
@@ -78,7 +98,9 @@ export default function TeamDashboardPage() {
         </div>
 
         <div style={{ padding: 24 }}>
-          {activeTab === "posting-schedule" ? (
+          {activeTab === "tasks" ? (
+            <TasksTab todos={todos} />
+          ) : activeTab === "posting-schedule" ? (
             <PostingScheduleTab entries={postingSchedule} />
           ) : (
             <p style={{ color: "#595959" }}>Coming soon</p>
