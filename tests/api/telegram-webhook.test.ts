@@ -7,6 +7,12 @@ vi.mock("@/lib/telegram/client", () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
   getFilePath: vi.fn(),
   downloadFile: vi.fn(),
+  editMessageText: vi.fn().mockResolvedValue(undefined),
+  answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/lib/telegram/callback-handler", () => ({
+  handleCallbackQuery: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/groq/client", () => ({
@@ -40,6 +46,7 @@ import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
 import { parseCaptureMessage, transcribeVoice } from "@/lib/groq/client";
 import { createTodo } from "@/lib/tasks/create-todo";
 import { handleChatMessage } from "@/lib/telegram/chat-handler";
+import { handleCallbackQuery } from "@/lib/telegram/callback-handler";
 import { appendMessage, shouldSkipClassifier } from "@/lib/telegram/conversation-memory";
 import { POST } from "@/app/api/telegram/webhook/route";
 
@@ -50,6 +57,7 @@ const mockTranscribeVoice = vi.mocked(transcribeVoice);
 const mockParseCaptureMessage = vi.mocked(parseCaptureMessage);
 const mockCreateTodo = vi.mocked(createTodo);
 const mockHandleChatMessage = vi.mocked(handleChatMessage);
+const mockHandleCallbackQuery = vi.mocked(handleCallbackQuery);
 const mockAppendMessage = vi.mocked(appendMessage);
 const mockShouldSkipClassifier = vi.mocked(shouldSkipClassifier);
 
@@ -78,6 +86,7 @@ beforeEach(async () => {
   mockParseCaptureMessage.mockClear();
   mockCreateTodo.mockClear();
   mockHandleChatMessage.mockClear().mockResolvedValue(undefined);
+  mockHandleCallbackQuery.mockClear().mockResolvedValue(undefined);
   mockAppendMessage.mockClear();
   mockShouldSkipClassifier.mockClear();
 });
@@ -244,4 +253,24 @@ test("the webhook still classifies normally if the clarifying-question routing c
   expect(mockParseCaptureMessage).toHaveBeenCalled();
   const rows = await db.select().from(tasks).where(eq(tasks.type, "todo"));
   expect(rows).toHaveLength(1);
+});
+
+test("a callback_query update is routed to handleCallbackQuery", async () => {
+  const update = {
+    update_id: 999,
+    callback_query: { id: "cb-1", data: "td|done|task-1", message: { message_id: 42, chat: { id: ALLOWED_CHAT_ID } } },
+  };
+  const res = await POST(updateRequest(update));
+  expect(res.status).toBe(200);
+  expect(mockHandleCallbackQuery).toHaveBeenCalledWith(ALLOWED_CHAT_ID, 42, "cb-1", "td|done|task-1", expect.any(Date));
+});
+
+test("a callback_query from a disallowed chat is ignored", async () => {
+  const update = {
+    update_id: 998,
+    callback_query: { id: "cb-2", data: "td|done|task-1", message: { message_id: 1, chat: { id: 1 } } },
+  };
+  const res = await POST(updateRequest(update));
+  expect(res.status).toBe(200);
+  expect(mockHandleCallbackQuery).not.toHaveBeenCalled();
 });

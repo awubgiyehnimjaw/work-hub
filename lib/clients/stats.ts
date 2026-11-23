@@ -8,7 +8,9 @@ export interface ClientRow {
 
 export interface ReviewTaskRow {
   clientId: string | null;
-  status: "active" | "completed";
+  // "dismissed" is a to-do-only status (never set on a review task) but is
+  // part of tasks.status's column type, so this field must accept it too.
+  status: "active" | "completed" | "dismissed";
   createdAt: Date;
   completedAt: Date | null;
 }

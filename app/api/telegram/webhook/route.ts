@@ -4,6 +4,7 @@ import { db } from "@/lib/db/client";
 import { clients, contentIdeas, telegramUpdates } from "@/lib/db/schema";
 import { createTodo } from "@/lib/tasks/create-todo";
 import { handleChatMessage } from "@/lib/telegram/chat-handler";
+import { handleCallbackQuery } from "@/lib/telegram/callback-handler";
 import { appendMessage, shouldSkipClassifier } from "@/lib/telegram/conversation-memory";
 import { checkTelegramWebhookSecret, isAllowedChatId } from "@/lib/telegram/webhook-auth";
 import { downloadFile, getFilePath, sendMessage } from "@/lib/telegram/client";
@@ -23,6 +24,11 @@ interface TelegramUpdate {
     chat: { id: number };
     text?: string;
     voice?: { file_id: string };
+  };
+  callback_query?: {
+    id: string;
+    data?: string;
+    message?: { message_id: number; chat: { id: number } };
   };
 }
 
@@ -81,12 +87,14 @@ export async function POST(request: Request) {
 
   const update: unknown = await request.json().catch(() => null);
   const message = (update as TelegramUpdate | null)?.message;
-  if (!message || typeof (update as TelegramUpdate).update_id !== "number") {
+  const callbackQuery = (update as TelegramUpdate | null)?.callback_query;
+  if ((!message && !callbackQuery) || typeof (update as TelegramUpdate).update_id !== "number") {
     return NextResponse.json({ status: "ignored" }, { status: 200 });
   }
   const updateId = (update as TelegramUpdate).update_id;
 
   // De-dup: a retried delivery of the same update_id is a no-op insert.
+  // Applies to both update kinds below, since it only reads update_id.
   const [inserted] = await db
     .insert(telegramUpdates)
     .values({ updateId })
@@ -94,6 +102,26 @@ export async function POST(request: Request) {
     .returning();
   if (!inserted) {
     return NextResponse.json({ status: "duplicate" }, { status: 200 });
+  }
+
+  if (callbackQuery) {
+    const callbackChatId = callbackQuery.message?.chat.id;
+    if (!callbackQuery.data || !callbackQuery.message || callbackChatId === undefined || !isAllowedChatId(callbackChatId)) {
+      return NextResponse.json({ status: "ignored" }, { status: 200 });
+    }
+    try {
+      await handleCallbackQuery(callbackChatId, callbackQuery.message.message_id, callbackQuery.id, callbackQuery.data, new Date());
+    } catch (error) {
+      console.error("telegram webhook: failed to handle callback query", error);
+    }
+    return NextResponse.json({ status: "ok" }, { status: 200 });
+  }
+
+  if (!message) {
+    // Unreachable given the checks above (one of message/callbackQuery is
+    // always present, and the callback_query branch above always returns),
+    // but narrows the type for the message-handling code below.
+    return NextResponse.json({ status: "ignored" }, { status: 200 });
   }
 
   const chatId = message.chat.id;

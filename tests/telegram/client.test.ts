@@ -74,9 +74,11 @@ test("editMessageText with an empty keyboard clears existing buttons", async () 
 });
 
 test("editMessageText without replyMarkup omits reply_markup entirely", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 200 })));
+  const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
   await editMessageText(123, 456, "hello");
-  expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1].body)).toEqual({ chat_id: 123, message_id: 456, text: "hello" });
+  const [, init] = fetchMock.mock.calls[0];
+  expect(JSON.parse(init.body)).toEqual({ chat_id: 123, message_id: 456, text: "hello" });
 });
 
 test("answerCallbackQuery posts the callback query id", async () => {
