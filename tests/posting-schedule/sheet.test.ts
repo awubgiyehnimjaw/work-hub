@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import {
+  classifyFullPostingScheduleStatus,
   classifyPostingScheduleStatus,
   entryKey,
   filterByNotCompleted,
@@ -146,4 +147,36 @@ test("classifyPostingScheduleStatus returns green for an entry due tomorrow", ()
 test("classifyPostingScheduleStatus returns none for an entry due 2 or 3 days out", () => {
   expect(classifyPostingScheduleStatus("2026-10-18", "2026-10-16")).toBe("none");
   expect(classifyPostingScheduleStatus("2026-10-19", "2026-10-16")).toBe("none");
+});
+
+test("classifyFullPostingScheduleStatus returns 'done' when isCompleted is true, regardless of date or notes", () => {
+  expect(classifyFullPostingScheduleStatus({ postDate: "2026-01-01", notes: null }, "2026-06-01", true)).toBe("done");
+});
+
+test("classifyFullPostingScheduleStatus returns 'done' when the sheet's own Notes says 'done', even if not completed in the app", () => {
+  expect(classifyFullPostingScheduleStatus({ postDate: "2026-01-01", notes: "done" }, "2026-06-01", false)).toBe("done");
+});
+
+test("classifyFullPostingScheduleStatus returns 'on-hold' when Notes says 'hold' and it isn't completed", () => {
+  expect(classifyFullPostingScheduleStatus({ postDate: "2026-01-01", notes: "hold" }, "2026-06-01", false)).toBe("on-hold");
+});
+
+test("classifyFullPostingScheduleStatus prefers 'done' over 'hold' when both signals are present", () => {
+  expect(classifyFullPostingScheduleStatus({ postDate: "2026-01-01", notes: "hold" }, "2026-06-01", true)).toBe("done");
+});
+
+test("classifyFullPostingScheduleStatus returns 'upcoming' for a blank Post Date (not completed, no hold)", () => {
+  expect(classifyFullPostingScheduleStatus({ postDate: null, notes: null }, "2026-06-01", false)).toBe("upcoming");
+});
+
+test("classifyFullPostingScheduleStatus returns 'overdue' for a past-or-today date, not completed, no hold", () => {
+  expect(classifyFullPostingScheduleStatus({ postDate: "2026-06-01", notes: null }, "2026-06-01", false)).toBe("overdue");
+});
+
+test("classifyFullPostingScheduleStatus returns 'due-soon' for a date within 3 days", () => {
+  expect(classifyFullPostingScheduleStatus({ postDate: "2026-06-03", notes: null }, "2026-06-01", false)).toBe("due-soon");
+});
+
+test("classifyFullPostingScheduleStatus returns 'upcoming' for a date more than 3 days out", () => {
+  expect(classifyFullPostingScheduleStatus({ postDate: "2026-06-10", notes: null }, "2026-06-01", false)).toBe("upcoming");
 });

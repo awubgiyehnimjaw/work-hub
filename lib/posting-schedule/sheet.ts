@@ -179,3 +179,29 @@ export function classifyPostingScheduleStatus(postDateKey: string, todayKey: str
   if (diffDays === 1) return "green";
   return "none";
 }
+
+export type FullPostingScheduleStatus = "overdue" | "due-soon" | "upcoming" | "done" | "on-hold";
+
+/**
+ * Status for the team dashboard's full (not just due-soon) posting-schedule
+ * list. "Done" is the union of both ways an entry can be settled — the
+ * app's own `postingScheduleCompletions` row, or the sheet's own Notes
+ * saying "done" — so the stat cards never disagree with what the existing
+ * Done button already shows. "On hold" only comes from the sheet's Notes;
+ * date-based bands reuse this file's own day-difference arithmetic.
+ */
+export function classifyFullPostingScheduleStatus(
+  entry: Pick<PostingScheduleEntry, "postDate" | "notes">,
+  todayKey: string,
+  isCompleted: boolean,
+): FullPostingScheduleStatus {
+  const notes = entry.notes?.toLowerCase();
+  if (isCompleted || notes === "done") return "done";
+  if (notes === "hold") return "on-hold";
+  if (!entry.postDate) return "upcoming";
+
+  const diffDays = (dateKeyToUtcMs(entry.postDate) - dateKeyToUtcMs(todayKey)) / DAY_MS;
+  if (diffDays <= 0) return "overdue";
+  if (diffDays <= 3) return "due-soon";
+  return "upcoming";
+}
