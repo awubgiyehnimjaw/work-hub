@@ -183,7 +183,14 @@ test("maybeSendWeeklyDigest does not send twice within the same week even if cal
 
 // 01:00 UTC = 09:00 SGT — inside the posting-schedule daily check window.
 const MORNING_IN_WINDOW = new Date("2026-10-16T01:05:00.000Z");
-const AFTERNOON_OUTSIDE_WINDOW = new Date("2026-10-16T05:05:00.000Z");
+// 00:30 UTC = 08:30 SGT — before the window opens.
+const BEFORE_WINDOW_OPENS = new Date("2026-10-16T00:30:00.000Z");
+// 05:05 UTC = 13:05 SGT — well past 09:00 SGT. The window has no upper
+// bound (the once-per-day guard is what actually caps sends): the 15-minute
+// cron ticks run on GitHub Actions' free `schedule` trigger, which is
+// best-effort and can silently skip the 09:00 SGT hour entirely for
+// several hours at a stretch, so a tick arriving late must still fire.
+const AFTER_WINDOW_OPENS_SAME_DAY = new Date("2026-10-16T05:05:00.000Z");
 
 const SAMPLE_CSV = [
   "Client,Video,Edit By,Post Date,Notes,Posted",
@@ -193,12 +200,21 @@ const SAMPLE_CSV = [
   "That Place,Montage,19 Oct 2026,20 Oct 2026,,",
 ].join("\n");
 
-test("maybeSendPostingScheduleDigest does nothing outside the daily check window", async () => {
-  const result = await maybeSendPostingScheduleDigest(AFTERNOON_OUTSIDE_WINDOW);
+test("maybeSendPostingScheduleDigest does nothing before the daily check window opens", async () => {
+  const result = await maybeSendPostingScheduleDigest(BEFORE_WINDOW_OPENS);
 
   expect(result).toEqual({ sent: false });
   expect(sendPushMock).not.toHaveBeenCalled();
   expect(fetchPostingScheduleCsvMock).not.toHaveBeenCalled();
+});
+
+test("maybeSendPostingScheduleDigest still fires later the same day if the 9am tick was missed", async () => {
+  fetchPostingScheduleCsvMock.mockResolvedValue(SAMPLE_CSV);
+
+  const result = await maybeSendPostingScheduleDigest(AFTER_WINDOW_OPENS_SAME_DAY);
+
+  expect(result).toEqual({ sent: true });
+  expect(sendPushMock).toHaveBeenCalledTimes(1);
 });
 
 test("maybeSendPostingScheduleDigest sends a push listing everything due within 3 days", async () => {
@@ -507,9 +523,18 @@ test("maybeSendMorningDigest excludes a snoozed to-do", async () => {
   expect(body).not.toContain("Snoozed");
 });
 
-test("maybeSendMorningDigest does nothing outside the 9am SGT window", async () => {
+test("maybeSendMorningDigest does nothing before the 9am SGT window opens", async () => {
   await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: null });
-  expect(await maybeSendMorningDigest(new Date("2026-01-01T10:00:00Z"))).toEqual({ sent: false });
+  expect(await maybeSendMorningDigest(new Date("2026-01-01T00:30:00Z"))).toEqual({ sent: false });
+});
+
+test("maybeSendMorningDigest still fires later the same day if the 9am tick was missed", async () => {
+  // Pins the fix for the real miss: GitHub Actions' free cron schedule
+  // silently skipped every tick between 23:35 UTC and 04:57 UTC one day,
+  // missing the 01:00 UTC (9am SGT) hour entirely. The window has no upper
+  // bound — the once-per-day guard is what caps it to a single send.
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: null });
+  expect(await maybeSendMorningDigest(new Date("2026-01-01T05:00:00Z"))).toEqual({ sent: true });
 });
 
 test("maybeSendMorningDigest does not mark the day checked if the send fails, so the next tick retries", async () => {
@@ -566,6 +591,16 @@ test("maybeSendEveningSweep only fires once per day", async () => {
   sendSweepItemMessageMock.mockClear();
   await maybeSendEveningSweep(new Date("2026-01-01T13:10:00Z"));
   expect(sendSweepItemMessageMock).not.toHaveBeenCalled();
+});
+
+test("maybeSendEveningSweep does nothing before the 9pm SGT window opens", async () => {
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: new Date("2025-12-31T00:00:00Z") });
+  expect(await maybeSendEveningSweep(new Date("2026-01-01T10:00:00Z"))).toEqual({ sent: false });
+});
+
+test("maybeSendEveningSweep still fires later the same day if the 9pm tick was missed", async () => {
+  await db.insert(tasks).values({ type: "todo", title: "x", status: "active", dueAt: new Date("2025-12-31T00:00:00Z") });
+  expect(await maybeSendEveningSweep(new Date("2026-01-01T15:00:00Z"))).toEqual({ sent: true });
 });
 
 test("maybeSendEveningSweep excludes a snoozed to-do", async () => {

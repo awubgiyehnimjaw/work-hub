@@ -18,7 +18,8 @@ import {
 const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 
 // 9pm SGT = 13:00 UTC — the evening sweep's own daily window, distinct
-// from POSTING_SCHEDULE_CHECK_HOUR_UTC's 9am SGT slot.
+// from POSTING_SCHEDULE_CHECK_HOUR_UTC's 9am SGT slot. Same "opens, no
+// upper bound" semantics as that constant, for the same reason.
 const EVENING_SWEEP_WINDOW_UTC = 13;
 
 /** `tasks` rows that aren't currently snoozed — same filter `lib/telegram/chat-tools.ts` uses. */
@@ -42,7 +43,11 @@ const TWENTY_HOURS_MS = 20 * 60 * 60 * 1000;
 
 // 01:00 UTC = 09:00 SGT — a "start of Callum's day" slot for the daily
 // posting-schedule check, distinct from the weekly digest's Sunday-evening
-// slot above.
+// slot above. This is when the window OPENS, not an exact hour to match:
+// GitHub Actions' free `schedule` trigger (this project's cron, instead of
+// Vercel's paid one) is best-effort and can silently skip ticks for hours,
+// so a tick landing after 9am must still fire. The once-per-day guard
+// (`*SentAt` + TWENTY_HOURS_MS) is what actually caps it to one send.
 const POSTING_SCHEDULE_CHECK_HOUR_UTC = 1;
 
 /**
@@ -257,7 +262,7 @@ export async function maybeSendWeeklyDigest(now: Date): Promise<{ sent: boolean 
 }
 
 function isInPostingScheduleWindow(now: Date): boolean {
-  return now.getUTCHours() === POSTING_SCHEDULE_CHECK_HOUR_UTC;
+  return now.getUTCHours() >= POSTING_SCHEDULE_CHECK_HOUR_UTC;
 }
 
 function describeDueDate(postDateKey: string, todayKey: string): string {
@@ -445,7 +450,7 @@ export async function maybeSendMorningDigest(now: Date): Promise<{ sent: boolean
  * `maybeSendMorningDigest`, via its own `eveningSweepSentAt` column.
  */
 export async function maybeSendEveningSweep(now: Date): Promise<{ sent: boolean }> {
-  if (now.getUTCHours() !== EVENING_SWEEP_WINDOW_UTC) {
+  if (now.getUTCHours() < EVENING_SWEEP_WINDOW_UTC) {
     return { sent: false };
   }
 
